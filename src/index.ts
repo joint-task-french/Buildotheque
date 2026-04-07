@@ -21,19 +21,39 @@ type Variables = { user?: JWTPayload };
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
+// ---------------------------------------------------------------------------
+// CORS – Configuration dynamique pour accepter Localhost et la Prod
+// ---------------------------------------------------------------------------
 app.use('*', async (c, next) => {
   const frontendUrl = c.env.FRONTEND_URL ?? '';
+
   return cors({
-    origin: frontendUrl || '*',
+    origin: (origin) => {
+      if (origin && (origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1'))) {
+        return origin;
+      }
+      if (origin && origin === frontendUrl) {
+        return origin;
+      }
+      return frontendUrl || '*';
+    },
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
     maxAge: 86400,
   })(c, next);
 });
 
+// Attach user from JWT when present (non-blocking)
 app.use('*', authMiddleware);
 
+// ---------------------------------------------------------------------------
+// Health check
+// ---------------------------------------------------------------------------
 app.get('/', (c) => c.json({ status: 'ok', name: 'Buildotheque API' }));
+
+// ---------------------------------------------------------------------------
+// Auth – Discord OAuth2
+// ---------------------------------------------------------------------------
 
 app.get('/auth/discord', (c) => {
   const state = c.req.query('state') ?? '';
@@ -60,6 +80,7 @@ app.get('/auth/discord/callback', async (c) => {
     const discordUser = await fetchDiscordUser(tokenResponse.access_token);
     const jwt = await createJWT(discordUser, c.env.JWT_SECRET);
 
+    // Redirect to frontend with the token as a query param.
     const redirectUrl = new URL(c.env.FRONTEND_URL);
     redirectUrl.searchParams.set('token', jwt);
     if (state) redirectUrl.searchParams.set('state', state);
@@ -75,6 +96,10 @@ app.get('/auth/me', requireAuth, (c) => {
   const user = c.get('user') as JWTPayload;
   return c.json({ id: user.sub, username: user.username, avatar: user.avatar ?? null });
 });
+
+// ---------------------------------------------------------------------------
+// Builds – CRUD + search
+// ---------------------------------------------------------------------------
 
 app.get('/builds', async (c) => {
   const text = c.req.query('text') ?? undefined;
