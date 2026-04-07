@@ -5,6 +5,17 @@ import type { Env, JWTPayload, DiscordTokenResponse, DiscordUser } from './types
 const DISCORD_API = 'https://discord.com/api/v10';
 const TOKEN_EXPIRY = '7d';
 
+/** * Hache une chaîne de caractères (l'ID Discord) en SHA-512.
+ */
+async function hashDiscordId(id: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(id);
+  const hashBuffer = await crypto.subtle.digest('SHA-512', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  // Conversion en chaîne hexadécimale
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 /** Encode the JWT secret as a CryptoKey. */
 async function getJwtKey(secret: string): Promise<CryptoKey> {
   const encoded = new TextEncoder().encode(secret);
@@ -17,16 +28,21 @@ async function getJwtKey(secret: string): Promise<CryptoKey> {
 /** Create a signed JWT for a Discord user. */
 export async function createJWT(user: DiscordUser, secret: string): Promise<string> {
   const key = await getJwtKey(secret);
+
+  // Hachage irréversible de l'ID avant de l'injecter dans le JWT
+  const hashedId = await hashDiscordId(user.id);
+
   const payload: JWTPayload = {
-    sub: user.id,
+    sub: hashedId,
     username: user.global_name ?? user.username,
     avatar: user.avatar ?? undefined,
   };
+
   return new SignJWT({ ...payload })
-    .setProtectedHeader({ alg: 'HS256' })
-    .setIssuedAt()
-    .setExpirationTime(TOKEN_EXPIRY)
-    .sign(key);
+      .setProtectedHeader({ alg: 'HS256' })
+      .setIssuedAt()
+      .setExpirationTime(TOKEN_EXPIRY)
+      .sign(key);
 }
 
 /** Verify a JWT and return its payload, or null if invalid. */
@@ -49,8 +65,8 @@ function extractBearerToken(authHeader: string | null | undefined): string | nul
 
 /** Middleware: attach authenticated user to context variables if a valid JWT is present. */
 export async function authMiddleware(
-  c: Context<{ Bindings: Env; Variables: { user?: JWTPayload } }>,
-  next: () => Promise<void>,
+    c: Context<{ Bindings: Env; Variables: { user?: JWTPayload } }>,
+    next: () => Promise<void>,
 ): Promise<void> {
   const token = extractBearerToken(c.req.header('Authorization'));
   if (token) {
@@ -64,8 +80,8 @@ export async function authMiddleware(
 
 /** Middleware: require authentication, return 401 if not authenticated. */
 export async function requireAuth(
-  c: Context<{ Bindings: Env; Variables: { user?: JWTPayload } }>,
-  next: () => Promise<void>,
+    c: Context<{ Bindings: Env; Variables: { user?: JWTPayload } }>,
+    next: () => Promise<void>,
 ): Promise<Response | void> {
   const token = extractBearerToken(c.req.header('Authorization'));
   if (!token) {
@@ -81,8 +97,8 @@ export async function requireAuth(
 
 /** Exchange an OAuth2 code for a Discord access token. */
 export async function exchangeDiscordCode(
-  code: string,
-  env: Env,
+    code: string,
+    env: Env,
 ): Promise<DiscordTokenResponse> {
   const body = new URLSearchParams({
     client_id: env.DISCORD_CLIENT_ID,

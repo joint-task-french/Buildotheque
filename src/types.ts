@@ -12,7 +12,7 @@ export interface Build {
   description: string;
   /** Author (Discord username) of the build. */
   auteur: string;
-  /** Discord user ID of the author. */
+  /** Discord user ID of the author (Hashed using SHA-512). */
   auteurId: string;
   /** List of tag identifiers associated with the build. */
   tags: string[];
@@ -54,7 +54,7 @@ export interface DiscordUser {
 
 /** JWT payload stored in session tokens. */
 export interface JWTPayload {
-  sub: string;        // Discord user ID
+  sub: string;        // Hashed Discord user ID (SHA-512)
   username: string;   // Discord username
   avatar?: string;    // Discord avatar hash
   iat?: number;
