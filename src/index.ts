@@ -222,7 +222,6 @@ app.post('/builds', requireAuth, async (c) => {
       encoded: input.encoded,
     },
     user.sub,
-    user.username,
     c.env,
   );
 

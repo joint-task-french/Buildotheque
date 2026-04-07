@@ -41,7 +41,7 @@ async function saveLikers(id: string, likers: Set<string>, kv: KVNamespace): Pro
 /** Create a new build and return it.
  *
  * The `auteur` display name is taken from `input.auteur` when provided;
- * otherwise it falls back to the Discord username stored in the JWT.
+ * otherwise it defaults to "Anonymous".
  *
  * NOTE: The index update (read-modify-write) is not atomic; under heavy
  * concurrent writes, entries could be lost.  For a high-concurrency
@@ -51,7 +51,6 @@ async function saveLikers(id: string, likers: Set<string>, kv: KVNamespace): Pro
 export async function createBuild(
   input: BuildInput,
   authorId: string,
-  authorName: string,
   env: Env,
 ): Promise<Build> {
   const id = uuidv4();
@@ -59,7 +58,7 @@ export async function createBuild(
     id,
     nom: input.nom,
     description: input.description,
-    auteur: input.auteur?.trim() || authorName,
+    auteur: input.auteur?.trim() || 'Anonymous',
     auteurId: authorId,
     tags: input.tags ?? [],
     encoded: input.encoded,
