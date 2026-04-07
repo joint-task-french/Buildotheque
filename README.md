@@ -34,11 +34,11 @@ Copy the generated IDs into `wrangler.toml`.
 
 Edit `wrangler.toml` and set:
 
-| Variable | Description |
-|---|---|
-| `DISCORD_CLIENT_ID` | Your Discord application's Client ID |
+| Variable               | Description                                                                     |
+|------------------------|---------------------------------------------------------------------------------|
+| `DISCORD_CLIENT_ID`    | Your Discord application's Client ID                                            |
 | `DISCORD_REDIRECT_URI` | OAuth2 redirect URI (e.g. `https://<worker>.workers.dev/auth/discord/callback`) |
-| `FRONTEND_URL` | URL to redirect users to after login (token is appended as `?token=...`) |
+| `FRONTEND_URL`         | URL to redirect users to after login (token is appended as `?token=...`)        |
 
 Set secrets (never commit these):
 
@@ -117,13 +117,14 @@ Create a new build.
 ```
 
 **Field limits:**
-| Field | Max length | Notes |
-|---|---|---|
-| `nom` | 25 chars | Required |
-| `description` | 250 chars | Required |
-| `auteur` | 25 chars | Optional – defaults to `Anonymous` |
-| `encoded` | 8000 chars | Required |
-| `tags` | 5 items, each ≤ 25 chars | Optional |
+
+| Field         | Max length               | Notes                              |
+|---------------|--------------------------|------------------------------------|
+| `nom`         | 25 chars                 | Required                           |
+| `description` | 250 chars                | Required                           |
+| `auteur`      | 25 chars                 | Optional – defaults to `Anonymous` |
+| `encoded`     | 8000 chars               | Required                           |
+| `tags`        | 5 items, each ≤ 25 chars | Optional                           |
 
 #### `GET /builds/:id`
 Retrieve a single build by ID.
