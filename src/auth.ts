@@ -12,7 +12,6 @@ async function hashDiscordId(id: string): Promise<string> {
   const data = encoder.encode(id);
   const hashBuffer = await crypto.subtle.digest('SHA-512', data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
-  // Conversion en chaîne hexadécimale
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
@@ -29,13 +28,16 @@ async function getJwtKey(secret: string): Promise<CryptoKey> {
 export async function createJWT(user: DiscordUser, secret: string): Promise<string> {
   const key = await getJwtKey(secret);
 
-  // Hachage irréversible de l'ID avant de l'injecter dans le JWT
   const hashedId = await hashDiscordId(user.id);
+
+  const avatarUrl = user.avatar
+      ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png`
+      : undefined;
 
   const payload: JWTPayload = {
     sub: hashedId,
     username: user.global_name ?? user.username,
-    avatar: user.avatar ?? undefined,
+    avatar: avatarUrl,
   };
 
   return new SignJWT({ ...payload })
