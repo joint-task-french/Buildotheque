@@ -26,16 +26,29 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 // ---------------------------------------------------------------------------
 app.use('*', async (c, next) => {
   const frontendUrl = c.env.FRONTEND_URL ?? '';
+  let frontendOrigin = '';
+
+  // Extraction sécurisée du domaine (origin) à partir de l'URL complète
+  try {
+    if (frontendUrl) {
+      frontendOrigin = new URL(frontendUrl).origin;
+    }
+  } catch (e) {
+    console.warn("FRONTEND_URL invalide", e);
+  }
 
   return cors({
     origin: (origin) => {
+      // Autoriser le développement local
       if (origin && (origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1'))) {
         return origin;
       }
-      if (origin && origin === frontendUrl) {
+      // Comparer avec l'origine extraite (sans le path)
+      if (origin && frontendOrigin && origin === frontendOrigin) {
         return origin;
       }
-      return frontendUrl || '*';
+      // Fallback
+      return frontendOrigin || '*';
     },
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
