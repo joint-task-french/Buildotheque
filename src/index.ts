@@ -22,17 +22,17 @@ type Variables = { user?: JWTPayload };
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 // ---------------------------------------------------------------------------
-// CORS – allow all origins (tighten for production if needed)
+// CORS – allow requests from the configured frontend URL
 // ---------------------------------------------------------------------------
-app.use(
-  '*',
-  cors({
-    origin: '*',
+app.use('*', async (c, next) => {
+  const frontendUrl = c.env.FRONTEND_URL ?? '';
+  return cors({
+    origin: frontendUrl || '*',
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
     maxAge: 86400,
-  }),
-);
+  })(c, next);
+});
 
 // Attach user from JWT when present (non-blocking)
 app.use('*', authMiddleware);
@@ -110,16 +110,23 @@ app.get('/auth/me', requireAuth, (c) => {
  * Search and list builds.
  *
  * Query params:
- *   - `text`  : search text matched against nom, description, auteur
- *   - `tags`  : comma-separated list of tag IDs (ALL must be present on the build)
+ *   - `text`   : search text matched against nom, description, auteur
+ *   - `tags`   : comma-separated list of tag IDs (ALL must be present on the build)
+ *   - `limit`  : max number of results (default: 50, max: 200)
+ *   - `offset` : number of results to skip (default: 0)
  */
 app.get('/builds', async (c) => {
   const text = c.req.query('text') ?? undefined;
   const tagsParam = c.req.query('tags');
   const tags = tagsParam ? tagsParam.split(',').map((t) => t.trim()).filter(Boolean) : undefined;
 
-  const builds = await searchBuilds(c.env, text, tags);
-  return c.json(builds);
+  const rawLimit = parseInt(c.req.query('limit') ?? '50', 10);
+  const rawOffset = parseInt(c.req.query('offset') ?? '0', 10);
+  const limit = Number.isNaN(rawLimit) || rawLimit < 1 ? 50 : Math.min(rawLimit, 200);
+  const offset = Number.isNaN(rawOffset) || rawOffset < 0 ? 0 : rawOffset;
+
+  const { builds, total } = await searchBuilds(c.env, text, tags, limit, offset);
+  return c.json({ builds, total, limit, offset });
 });
 
 /**

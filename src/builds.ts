@@ -21,7 +21,13 @@ async function saveBuildIndex(kv: KVNamespace, ids: string[]): Promise<void> {
   await kv.put(BUILD_INDEX_KEY, JSON.stringify(ids));
 }
 
-/** Create a new build and return it. */
+/** Create a new build and return it.
+ *
+ * NOTE: The index update (read-modify-write) is not atomic; under heavy
+ * concurrent writes, entries could be lost.  For a high-concurrency
+ * production deployment, replace with Cloudflare Durable Objects or
+ * use KV `list()` with a shared key prefix instead of a manual index.
+ */
 export async function createBuild(
   input: BuildInput,
   authorId: string,
@@ -41,8 +47,10 @@ export async function createBuild(
     timestamp: Date.now(),
   };
 
+  // Store the build document first so it is always addressable.
   await env.BUILDS_KV.put(buildKey(id), JSON.stringify(build));
 
+  // Update the shared index (non-atomic – see note above).
   const index = await getBuildIndex(env.BUILDS_KV);
   index.push(id);
   await saveBuildIndex(env.BUILDS_KV, index);
@@ -92,7 +100,12 @@ export async function deleteBuild(id: string, env: Env): Promise<boolean> {
   return true;
 }
 
-/** Increment the like count of a build. Returns the updated build or null if not found. */
+/** Increment the like count of a build. Returns the updated build or null if not found.
+ *
+ * NOTE: This is a non-atomic read-modify-write; under heavy concurrent
+ * requests, some increments may be lost.  For strict accuracy, migrate
+ * to Cloudflare Durable Objects with transactional storage.
+ */
 export async function likeBuild(id: string, env: Env): Promise<Build | null> {
   const existing = await getBuild(id, env);
   if (!existing) return null;
@@ -104,17 +117,25 @@ export async function likeBuild(id: string, env: Env): Promise<Build | null> {
 
 /** Search builds by optional text and tags.
  *
- * - `text`: matches against nom, description, or auteur (case-insensitive)
- * - `tags`: array of tag IDs; the build must contain ALL of them
+ * - `text`  : matches against nom, description, or auteur (case-insensitive)
+ * - `tags`  : array of tag IDs; the build must contain ALL of them
+ * - `limit` : maximum number of results to return (default: 50)
+ * - `offset`: number of results to skip for pagination (default: 0)
+ *
+ * NOTE: All build objects are fetched sequentially from KV to apply
+ * filters.  This is acceptable for small datasets.  For large libraries,
+ * consider Cloudflare D1 or maintaining separate tag-keyed indexes in KV.
  */
 export async function searchBuilds(
   env: Env,
   text?: string,
   tags?: string[],
-): Promise<Build[]> {
+  limit = 50,
+  offset = 0,
+): Promise<{ builds: Build[]; total: number }> {
   const index = await getBuildIndex(env.BUILDS_KV);
 
-  const results: Build[] = [];
+  const matched: Build[] = [];
   const lowerText = text?.toLowerCase().trim();
 
   for (const id of index) {
@@ -135,8 +156,10 @@ export async function searchBuilds(
       if (!inNom && !inDescription && !inAuteur) continue;
     }
 
-    results.push(build);
+    matched.push(build);
   }
 
-  return results;
+  const total = matched.length;
+  const builds = matched.slice(offset, offset + limit);
+  return { builds, total };
 }

@@ -94,8 +94,13 @@ Search and list builds.
 Query params:
 - `text` *(optional)* – text matched against `nom`, `description`, `auteur` (case-insensitive)
 - `tags` *(optional)* – comma-separated tag IDs; builds must contain **all** of them
+- `limit` *(optional)* – max results to return (default: 50, max: 200)
+- `offset` *(optional)* – results to skip for pagination (default: 0)
 
-**Response:** Array of build objects.
+**Response:**
+```json
+{ "builds": [...], "total": 42, "limit": 50, "offset": 0 }
+```
 
 #### `POST /builds` *(auth required)*
 Create a new build.
