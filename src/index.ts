@@ -13,7 +13,7 @@ import {
   getBuild,
   updateBuild,
   deleteBuild,
-  likeBuild,
+  toggleLike,
   searchBuilds,
 } from './builds';
 
@@ -133,7 +133,14 @@ app.get('/builds', async (c) => {
  * POST /builds
  * Create a new build. Requires authentication.
  *
- * Body: { nom, description, tags?, encoded }
+ * Body: { nom, description, auteur?, tags?, encoded }
+ *
+ * Limits:
+ *   - nom         : ≤ 25 characters
+ *   - description : ≤ 250 characters
+ *   - auteur      : ≤ 25 characters (optional; defaults to Discord username)
+ *   - tags        : ≤ 5 items, each ≤ 25 characters
+ *   - encoded     : ≤ 8000 characters
  */
 app.post('/builds', requireAuth, async (c) => {
   const user = c.get('user') as JWTPayload;
@@ -155,25 +162,62 @@ app.post('/builds', requireAuth, async (c) => {
     return c.json({ error: 'Champs requis manquants : nom, description, encoded' }, 400);
   }
 
-  const input = body as { nom: unknown; description: unknown; tags?: unknown; encoded: unknown };
+  const input = body as {
+    nom: unknown;
+    description: unknown;
+    auteur?: unknown;
+    tags?: unknown;
+    encoded: unknown;
+  };
 
   if (typeof input.nom !== 'string' || input.nom.trim() === '') {
     return c.json({ error: 'Le champ "nom" doit être une chaîne non vide' }, 400);
   }
+  if (input.nom.length > 25) {
+    return c.json({ error: 'Le champ "nom" ne peut pas dépasser 25 caractères' }, 400);
+  }
   if (typeof input.description !== 'string') {
     return c.json({ error: 'Le champ "description" doit être une chaîne' }, 400);
+  }
+  if (input.description.length > 250) {
+    return c.json({ error: 'Le champ "description" ne peut pas dépasser 250 caractères' }, 400);
+  }
+  if (input.auteur !== undefined) {
+    if (typeof input.auteur !== 'string' || input.auteur.trim() === '') {
+      return c.json({ error: 'Le champ "auteur" doit être une chaîne non vide' }, 400);
+    }
+    if (input.auteur.length > 25) {
+      return c.json({ error: 'Le champ "auteur" ne peut pas dépasser 25 caractères' }, 400);
+    }
   }
   if (typeof input.encoded !== 'string' || input.encoded.trim() === '') {
     return c.json({ error: 'Le champ "encoded" doit être une chaîne non vide' }, 400);
   }
-  if (input.tags !== undefined && !Array.isArray(input.tags)) {
-    return c.json({ error: 'Le champ "tags" doit être un tableau' }, 400);
+  if (input.encoded.length > 8000) {
+    return c.json({ error: 'Le champ "encoded" ne peut pas dépasser 8000 caractères' }, 400);
+  }
+  if (input.tags !== undefined) {
+    if (!Array.isArray(input.tags)) {
+      return c.json({ error: 'Le champ "tags" doit être un tableau' }, 400);
+    }
+    if (input.tags.length > 5) {
+      return c.json({ error: 'Maximum 5 tags autorisés' }, 400);
+    }
+    for (const tag of input.tags) {
+      if (typeof tag !== 'string') {
+        return c.json({ error: 'Chaque tag doit être une chaîne de caractères' }, 400);
+      }
+      if (tag.length > 25) {
+        return c.json({ error: 'Chaque tag ne peut pas dépasser 25 caractères' }, 400);
+      }
+    }
   }
 
   const build = await createBuild(
     {
       nom: input.nom,
       description: input.description,
+      auteur: typeof input.auteur === 'string' ? input.auteur : undefined,
       tags: Array.isArray(input.tags) ? (input.tags as string[]) : undefined,
       encoded: input.encoded,
     },
@@ -200,7 +244,9 @@ app.get('/builds/:id', async (c) => {
  * PUT /builds/:id
  * Update a build. Requires authentication and ownership.
  *
- * Body: { nom?, description?, tags?, encoded? }
+ * Body: { nom?, description?, auteur?, tags?, encoded? }
+ *
+ * Same character/count limits as POST apply to any supplied field.
  */
 app.put('/builds/:id', requireAuth, async (c) => {
   const user = c.get('user') as JWTPayload;
@@ -219,19 +265,61 @@ app.put('/builds/:id', requireAuth, async (c) => {
     return c.json({ error: 'Corps de requête JSON invalide' }, 400);
   }
 
-  const input = body as { nom?: unknown; description?: unknown; tags?: unknown; encoded?: unknown };
+  const input = body as {
+    nom?: unknown;
+    description?: unknown;
+    auteur?: unknown;
+    tags?: unknown;
+    encoded?: unknown;
+  };
 
-  if (input.nom !== undefined && (typeof input.nom !== 'string' || input.nom.trim() === '')) {
-    return c.json({ error: 'Le champ "nom" doit être une chaîne non vide' }, 400);
+  if (input.nom !== undefined) {
+    if (typeof input.nom !== 'string' || input.nom.trim() === '') {
+      return c.json({ error: 'Le champ "nom" doit être une chaîne non vide' }, 400);
+    }
+    if (input.nom.length > 25) {
+      return c.json({ error: 'Le champ "nom" ne peut pas dépasser 25 caractères' }, 400);
+    }
   }
-  if (input.description !== undefined && typeof input.description !== 'string') {
-    return c.json({ error: 'Le champ "description" doit être une chaîne' }, 400);
+  if (input.description !== undefined) {
+    if (typeof input.description !== 'string') {
+      return c.json({ error: 'Le champ "description" doit être une chaîne' }, 400);
+    }
+    if (input.description.length > 250) {
+      return c.json({ error: 'Le champ "description" ne peut pas dépasser 250 caractères' }, 400);
+    }
   }
-  if (input.encoded !== undefined && (typeof input.encoded !== 'string' || input.encoded.trim() === '')) {
-    return c.json({ error: 'Le champ "encoded" doit être une chaîne non vide' }, 400);
+  if (input.auteur !== undefined) {
+    if (typeof input.auteur !== 'string' || input.auteur.trim() === '') {
+      return c.json({ error: 'Le champ "auteur" doit être une chaîne non vide' }, 400);
+    }
+    if (input.auteur.length > 25) {
+      return c.json({ error: 'Le champ "auteur" ne peut pas dépasser 25 caractères' }, 400);
+    }
   }
-  if (input.tags !== undefined && !Array.isArray(input.tags)) {
-    return c.json({ error: 'Le champ "tags" doit être un tableau' }, 400);
+  if (input.encoded !== undefined) {
+    if (typeof input.encoded !== 'string' || input.encoded.trim() === '') {
+      return c.json({ error: 'Le champ "encoded" doit être une chaîne non vide' }, 400);
+    }
+    if (input.encoded.length > 8000) {
+      return c.json({ error: 'Le champ "encoded" ne peut pas dépasser 8000 caractères' }, 400);
+    }
+  }
+  if (input.tags !== undefined) {
+    if (!Array.isArray(input.tags)) {
+      return c.json({ error: 'Le champ "tags" doit être un tableau' }, 400);
+    }
+    if (input.tags.length > 5) {
+      return c.json({ error: 'Maximum 5 tags autorisés' }, 400);
+    }
+    for (const tag of input.tags) {
+      if (typeof tag !== 'string') {
+        return c.json({ error: 'Chaque tag doit être une chaîne de caractères' }, 400);
+      }
+      if (tag.length > 25) {
+        return c.json({ error: 'Chaque tag ne peut pas dépasser 25 caractères' }, 400);
+      }
+    }
   }
 
   const updated = await updateBuild(
@@ -239,6 +327,7 @@ app.put('/builds/:id', requireAuth, async (c) => {
     {
       nom: typeof input.nom === 'string' ? input.nom : undefined,
       description: typeof input.description === 'string' ? input.description : undefined,
+      auteur: typeof input.auteur === 'string' ? input.auteur : undefined,
       tags: Array.isArray(input.tags) ? (input.tags as string[]) : undefined,
       encoded: typeof input.encoded === 'string' ? input.encoded : undefined,
     },
@@ -268,13 +357,18 @@ app.delete('/builds/:id', requireAuth, async (c) => {
 
 /**
  * POST /builds/:id/like
- * Increment the like counter for a build. Requires authentication.
+ * Toggle the like on a build for the authenticated user.
+ * - First call: adds a like (each user can like a build only once)
+ * - Second call: removes the like
+ *
+ * Returns: { build, liked } where `liked` indicates the new like state.
  */
 app.post('/builds/:id/like', requireAuth, async (c) => {
+  const user = c.get('user') as JWTPayload;
   const id = c.req.param('id') ?? '';
-  const updated = await likeBuild(id, c.env);
-  if (!updated) return c.json({ error: 'Build introuvable' }, 404);
-  return c.json(updated);
+  const result = await toggleLike(id, user.sub, c.env);
+  if (!result) return c.json({ error: 'Build introuvable' }, 404);
+  return c.json(result);
 });
 
 // ---------------------------------------------------------------------------

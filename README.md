@@ -110,22 +110,36 @@ Create a new build.
 {
   "nom": "My Build",
   "description": "A great build",
+  "auteur": "MyUsername",
   "tags": ["dps", "pvp"],
   "encoded": "base64encodedstring"
 }
 ```
 
+**Field limits:**
+| Field | Max length | Notes |
+|---|---|---|
+| `nom` | 25 chars | Required |
+| `description` | 250 chars | Required |
+| `auteur` | 25 chars | Optional – defaults to Discord username |
+| `encoded` | 8000 chars | Required |
+| `tags` | 5 items, each ≤ 25 chars | Optional |
+
 #### `GET /builds/:id`
 Retrieve a single build by ID.
 
 #### `PUT /builds/:id` *(auth required, owner only)*
-Update a build. All fields are optional.
+Update a build. All fields are optional. Same limits as POST apply.
 
 #### `DELETE /builds/:id` *(auth required, owner only)*
 Delete a build.
 
 #### `POST /builds/:id/like` *(auth required)*
-Increment the like counter for a build.
+Toggle the like on a build.
+- First call: adds a like (one like per user per build)
+- Second call: removes the like
+
+**Response:** `{ "build": { ... }, "liked": true }`
 
 ---
 

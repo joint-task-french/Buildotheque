@@ -28,6 +28,8 @@ export interface Build {
 export interface BuildInput {
   nom: string;
   description: string;
+  /** Display name chosen by the author (≤ 25 characters). */
+  auteur?: string;
   tags?: string[];
   encoded: string;
 }

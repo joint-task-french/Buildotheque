@@ -9,6 +9,11 @@ function buildKey(id: string): string {
   return `build:${id}`;
 }
 
+/** KV key for the set of user IDs who liked a build. */
+function likesKey(id: string): string {
+  return `likes:${id}`;
+}
+
 /** Retrieve all build IDs from the index. */
 async function getBuildIndex(kv: KVNamespace): Promise<string[]> {
   const raw = await kv.get(BUILD_INDEX_KEY);
@@ -21,7 +26,22 @@ async function saveBuildIndex(kv: KVNamespace, ids: string[]): Promise<void> {
   await kv.put(BUILD_INDEX_KEY, JSON.stringify(ids));
 }
 
+/** Retrieve the set of user IDs who liked a build. */
+async function getLikers(id: string, kv: KVNamespace): Promise<Set<string>> {
+  const raw = await kv.get(likesKey(id));
+  if (!raw) return new Set();
+  return new Set(JSON.parse(raw) as string[]);
+}
+
+/** Persist the set of user IDs who liked a build. */
+async function saveLikers(id: string, likers: Set<string>, kv: KVNamespace): Promise<void> {
+  await kv.put(likesKey(id), JSON.stringify([...likers]));
+}
+
 /** Create a new build and return it.
+ *
+ * The `auteur` display name is taken from `input.auteur` when provided;
+ * otherwise it falls back to the Discord username stored in the JWT.
  *
  * NOTE: The index update (read-modify-write) is not atomic; under heavy
  * concurrent writes, entries could be lost.  For a high-concurrency
@@ -39,7 +59,7 @@ export async function createBuild(
     id,
     nom: input.nom,
     description: input.description,
-    auteur: authorName,
+    auteur: input.auteur?.trim() || authorName,
     auteurId: authorId,
     tags: input.tags ?? [],
     encoded: input.encoded,
@@ -78,6 +98,7 @@ export async function updateBuild(
     ...existing,
     nom: input.nom ?? existing.nom,
     description: input.description ?? existing.description,
+    auteur: input.auteur !== undefined ? (input.auteur.trim() || existing.auteur) : existing.auteur,
     tags: input.tags ?? existing.tags,
     encoded: input.encoded ?? existing.encoded,
   };
@@ -92,6 +113,7 @@ export async function deleteBuild(id: string, env: Env): Promise<boolean> {
   if (!existing) return false;
 
   await env.BUILDS_KV.delete(buildKey(id));
+  await env.BUILDS_KV.delete(likesKey(id));
 
   const index = await getBuildIndex(env.BUILDS_KV);
   const newIndex = index.filter((i) => i !== id);
@@ -100,19 +122,44 @@ export async function deleteBuild(id: string, env: Env): Promise<boolean> {
   return true;
 }
 
-/** Increment the like count of a build. Returns the updated build or null if not found.
+/** Toggle the like on a build for a given user.
+ *
+ * - If the user has not yet liked the build, their ID is added and the like
+ *   count is incremented.
+ * - If the user has already liked the build, their ID is removed and the like
+ *   count is decremented.
+ *
+ * Returns the updated build and whether the user now likes it, or null if the
+ * build was not found.
  *
  * NOTE: This is a non-atomic read-modify-write; under heavy concurrent
- * requests, some increments may be lost.  For strict accuracy, migrate
- * to Cloudflare Durable Objects with transactional storage.
+ * requests, some updates may be lost.  For strict accuracy, migrate to
+ * Cloudflare Durable Objects with transactional storage.
  */
-export async function likeBuild(id: string, env: Env): Promise<Build | null> {
+export async function toggleLike(
+  id: string,
+  userId: string,
+  env: Env,
+): Promise<{ build: Build; liked: boolean } | null> {
   const existing = await getBuild(id, env);
   if (!existing) return null;
 
-  const updated: Build = { ...existing, likes: existing.likes + 1 };
-  await env.BUILDS_KV.put(buildKey(id), JSON.stringify(updated));
-  return updated;
+  const likers = await getLikers(id, env.BUILDS_KV);
+  const alreadyLiked = likers.has(userId);
+
+  if (alreadyLiked) {
+    likers.delete(userId);
+  } else {
+    likers.add(userId);
+  }
+
+  const liked = !alreadyLiked;
+  const build: Build = { ...existing, likes: likers.size };
+
+  await env.BUILDS_KV.put(buildKey(id), JSON.stringify(build));
+  await saveLikers(id, likers, env.BUILDS_KV);
+
+  return { build, liked };
 }
 
 /** Search builds by optional text and tags.
