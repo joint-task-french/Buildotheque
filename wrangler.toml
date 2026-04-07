@@ -5,13 +5,13 @@ compatibility_flags = ["nodejs_compat"]
 
 [[kv_namespaces]]
 binding = "BUILDS_KV"
-id = "REPLACE_WITH_YOUR_BUILDS_KV_ID"
-preview_id = "REPLACE_WITH_YOUR_BUILDS_KV_PREVIEW_ID"
+id = "cff3ba1444bd4addad4b4aef46334dd0"
+preview_id = "1c47f108cf6843c8a3ce61edf139986a"
 
 [vars]
-DISCORD_CLIENT_ID = "YOUR_DISCORD_CLIENT_ID"
-DISCORD_REDIRECT_URI = "https://buildotheque.YOUR_SUBDOMAIN.workers.dev/auth/discord/callback"
-FRONTEND_URL = "https://your-frontend-url.com"
+DISCORD_CLIENT_ID = "1491105232799928520"
+DISCORD_REDIRECT_URI = "https://buildotheque.ftnl.workers.dev/auth/discord/callback"
+FRONTEND_URL = "https://joint-task-french.github.io/BDDFr/library"
 
 # Secrets (set via `wrangler secret put`):
 # DISCORD_CLIENT_SECRET - Your Discord OAuth2 client secret
