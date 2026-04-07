@@ -1,0 +1,18 @@
+name = "buildotheque"
+main = "src/index.ts"
+compatibility_date = "2024-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[kv_namespaces]]
+binding = "BUILDS_KV"
+id = "REPLACE_WITH_YOUR_BUILDS_KV_ID"
+preview_id = "REPLACE_WITH_YOUR_BUILDS_KV_PREVIEW_ID"
+
+[vars]
+DISCORD_CLIENT_ID = "YOUR_DISCORD_CLIENT_ID"
+DISCORD_REDIRECT_URI = "https://buildotheque.YOUR_SUBDOMAIN.workers.dev/auth/discord/callback"
+FRONTEND_URL = "https://your-frontend-url.com"
+
+# Secrets (set via `wrangler secret put`):
+# DISCORD_CLIENT_SECRET - Your Discord OAuth2 client secret
+# JWT_SECRET           - A strong random secret for signing JWTs

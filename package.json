@@ -1,0 +1,32 @@
+{
+  "name": "buildotheque",
+  "version": "1.0.0",
+  "description": "Cloudflare Workers backend for storing and searching game builds",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/joint-task-french/Buildotheque.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/joint-task-french/Buildotheque/issues"
+  },
+  "homepage": "https://github.com/joint-task-french/Buildotheque#readme",
+  "dependencies": {
+    "hono": "^4.12.12",
+    "jose": "^6.2.2",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260405.1",
+    "typescript": "^6.0.2",
+    "wrangler": "^4.80.0"
+  }
+}
