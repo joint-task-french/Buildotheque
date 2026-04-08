@@ -25,20 +25,69 @@ type Variables = { user?: JWTPayload };
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 // ---------------------------------------------------------------------------
+// Helpers pour la vérification des domaines
+// ---------------------------------------------------------------------------
+
+/**
+ * Récupère la liste des domaines autorisés à partir des variables d'environnement.
+ */
+function getAllowedDomains(env: Env): string[] {
+  const domains: string[] = [];
+
+  // Toujours autoriser le domaine du front par défaut
+  if (env.FRONTEND_URL) {
+    try {
+      domains.push(new URL(env.FRONTEND_URL).hostname.toLowerCase());
+    } catch {
+      console.warn("FRONTEND_URL invalide");
+    }
+  }
+
+  // Ajouter les domaines supplémentaires configurés
+  if (env.ALLOWED_DOMAINS) {
+    const extraDomains = env.ALLOWED_DOMAINS.split(',').map((d) => d.trim().toLowerCase()).filter(Boolean);
+    domains.push(...extraDomains);
+  }
+
+  // Retourner une liste unique
+  return [...new Set(domains)];
+}
+
+/**
+ * Vérifie si l'URL ou l'origine cible correspond à un des domaines autorisés (gère les wildcards).
+ */
+function isDomainAllowed(targetUrlOrOrigin: string, allowedDomains: string[]): boolean {
+  try {
+    const hostname = new URL(targetUrlOrOrigin).hostname.toLowerCase();
+
+    return allowedDomains.some((domain) => {
+      // Gestion du wildcard *.domaine.com
+      if (domain.startsWith('*.')) {
+        const baseDomain = domain.slice(2); // Récupère 'domaine.com'
+        // Autorise le domaine de base lui-même ou n'importe quel sous-domaine
+        return hostname === baseDomain || hostname.endsWith(`.${baseDomain}`);
+      }
+
+      // Correspondance stricte pour les autres
+      return hostname === domain;
+    });
+  } catch {
+    return false; // URL malformée
+  }
+}
+
+// ---------------------------------------------------------------------------
 // CORS – Configuration dynamique pour accepter Localhost et la Prod
 // ---------------------------------------------------------------------------
 app.use('*', async (c, next) => {
-  const frontendUrl = c.env.FRONTEND_URL ?? '';
-  let frontendOrigin = '';
+  const allowedDomains = getAllowedDomains(c.env);
 
-  // Extraction sécurisée du domaine (origin) à partir de l'URL complète
+  let defaultOrigin = '*';
   try {
-    if (frontendUrl) {
-      frontendOrigin = new URL(frontendUrl).origin;
+    if (c.env.FRONTEND_URL) {
+      defaultOrigin = new URL(c.env.FRONTEND_URL).origin;
     }
-  } catch (e) {
-    console.warn("FRONTEND_URL invalide", e);
-  }
+  } catch {}
 
   return cors({
     origin: (origin) => {
@@ -46,12 +95,12 @@ app.use('*', async (c, next) => {
       if (origin && (origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1'))) {
         return origin;
       }
-      // Comparer avec l'origine extraite (sans le path)
-      if (origin && frontendOrigin && origin === frontendOrigin) {
+      // Vérifier si le domaine de l'origine est autorisé
+      if (origin && isDomainAllowed(origin, allowedDomains)) {
         return origin;
       }
-      // Fallback
-      return frontendOrigin || '*';
+      // Fallback sur l'origine du front par défaut
+      return defaultOrigin;
     },
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
@@ -72,20 +121,45 @@ app.get('/', (c) => c.json({ status: 'ok', name: 'Buildotheque API' }));
 // ---------------------------------------------------------------------------
 
 app.get('/auth/discord', (c) => {
-  const state = c.req.query('state') ?? '';
+  const originalState = c.req.query('state') ?? '';
+  const returnUrl = c.req.query('returnUrl'); // URL demandée par le client
+
+  // On encapsule l'état original et l'URL de retour souhaitée dans un JSON encodé en base64
+  const stateObj = {
+    s: originalState,
+    r: returnUrl || ''
+  };
+  const encodedState = btoa(JSON.stringify(stateObj));
+
   const params = new URLSearchParams({
     client_id: c.env.DISCORD_CLIENT_ID,
     redirect_uri: c.env.DISCORD_REDIRECT_URI,
     response_type: 'code',
     scope: 'identify',
-    state,
+    state: encodedState,
   });
+
   return c.redirect(`https://discord.com/api/oauth2/authorize?${params.toString()}`);
 });
 
 app.get('/auth/discord/callback', async (c) => {
   const code = c.req.query('code');
-  const state = c.req.query('state') ?? '';
+  const encodedState = c.req.query('state') ?? '';
+
+  let originalState = '';
+  let requestedReturnUrl = '';
+
+  // Décodage de l'état
+  try {
+    if (encodedState) {
+      const decoded = JSON.parse(atob(encodedState));
+      if (decoded.s) originalState = decoded.s;
+      if (decoded.r) requestedReturnUrl = decoded.r;
+    }
+  } catch (e) {
+    // Rétrocompatibilité
+    originalState = encodedState;
+  }
 
   if (!code) {
     return c.json({ error: 'Code OAuth manquant' }, 400);
@@ -96,10 +170,22 @@ app.get('/auth/discord/callback', async (c) => {
     const discordUser = await fetchDiscordUser(tokenResponse.access_token);
     const jwt = await createJWT(discordUser, c.env.JWT_SECRET);
 
-    // Redirect to frontend with the token as a query param.
-    const redirectUrl = new URL(c.env.FRONTEND_URL);
+    // Détermination de l'URL de redirection sécurisée
+    let finalRedirectUrlStr = c.env.FRONTEND_URL;
+
+    if (requestedReturnUrl) {
+      const allowedDomains = getAllowedDomains(c.env);
+      // On redirige vers l'URL demandée uniquement si son domaine est autorisé
+      if (isDomainAllowed(requestedReturnUrl, allowedDomains)) {
+        finalRedirectUrlStr = requestedReturnUrl;
+      } else {
+        console.warn("Domaine non autorisé pour le retour OAuth :", requestedReturnUrl);
+      }
+    }
+
+    const redirectUrl = new URL(finalRedirectUrlStr);
     redirectUrl.searchParams.set('token', jwt);
-    if (state) redirectUrl.searchParams.set('state', state);
+    if (originalState) redirectUrl.searchParams.set('state', originalState);
 
     return c.redirect(redirectUrl.toString());
   } catch (err) {
@@ -184,7 +270,10 @@ app.get('/doc', (c) => {
       '/auth/discord': {
         get: {
           summary: 'Redirection vers Discord OAuth2',
-          parameters: [{ name: 'state', in: 'query', schema: { type: 'string' } }],
+          parameters: [
+            { name: 'state', in: 'query', schema: { type: 'string' } },
+            { name: 'returnUrl', in: 'query', schema: { type: 'string' }, description: 'URL de redirection personnalisée après connexion' }
+          ],
           responses: { 302: { description: 'Redirection vers Discord' } },
         },
       },

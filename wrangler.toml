@@ -12,6 +12,7 @@ preview_id = "1c47f108cf6843c8a3ce61edf139986a"
 DISCORD_CLIENT_ID = "1491105232799928520"
 DISCORD_REDIRECT_URI = "https://buildotheque.ftnl.workers.dev/auth/discord/callback"
 FRONTEND_URL = "https://joint-task-french.github.io/BDDFr/library"
+ALLOWED_DOMAINS = "joint-task-french.github.io"
 
 # Secrets (set via `wrangler secret put`):
 # DISCORD_CLIENT_SECRET - Your Discord OAuth2 client secret
