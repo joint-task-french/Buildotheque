@@ -16,3 +16,10 @@ FRONTEND_URL = "https://joint-task-french.github.io/BDDFr/library"
 # Secrets (set via `wrangler secret put`):
 # DISCORD_CLIENT_SECRET - Your Discord OAuth2 client secret
 # JWT_SECRET           - A strong random secret for signing JWTs
+
+[observability]
+[observability.logs]
+enabled = true
+invocation_logs = true
+
+[observability.traces]
