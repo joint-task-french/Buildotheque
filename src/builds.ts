@@ -131,6 +131,7 @@ export async function searchBuilds(
     auteurId?: string,
     limit = 50,
     offset = 0,
+    disableRandom = false,
 ): Promise<{ builds: Build[]; total: number }> {
   const index = await getBuildIndex(env.BUILDS_KV);
   const matched: Build[] = [];
@@ -158,6 +159,81 @@ export async function searchBuilds(
   }
 
   const total = matched.length;
-  const builds = matched.slice(offset, offset + limit);
+
+  if (disableRandom || total <= limit) {
+    const sorted = [...matched].sort((a, b) => b.likes - a.likes);
+    const builds = sorted.slice(offset, offset + limit);
+    return { builds, total };
+  }
+
+  const likesCount = Math.floor(limit * 0.75);
+  const randomCount = limit - likesCount;
+
+  const sortedByLikes = [...matched].sort((a, b) => b.likes - a.likes);
+
+  const topLikes = sortedByLikes.slice(0, likesCount);
+  const topLikesIds = new Set(topLikes.map(b => b.id));
+
+  const remaining = matched.filter(b => !topLikesIds.has(b.id));
+
+  for (let i = remaining.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [remaining[i], remaining[j]] = [remaining[j], remaining[i]];
+  }
+
+  const randomBuilds = remaining.slice(0, randomCount);
+
+  let builds = [...topLikes, ...randomBuilds];
+
   return { builds, total };
+}
+
+export async function getRecentBuilds(
+  env: Env,
+  text?: string,
+  tags?: string[],
+  auteurId?: string,
+  limit = 50,
+  offset = 0,
+): Promise<{ builds: Build[]; total: number }> {
+  const index = await getBuildIndex(env.BUILDS_KV);
+  const matched: Build[] = [];
+  const lowerText = text?.toLowerCase().trim();
+
+  for (const id of index) {
+    const build = await getBuild(id, env);
+    if (!build) continue;
+
+    if (auteurId && build.auteurId !== auteurId) continue;
+
+    if (tags && tags.length > 0) {
+      const hasAllTags = tags.every((tag) => build.tags.includes(tag));
+      if (!hasAllTags) continue;
+    }
+
+    if (lowerText) {
+      const inNom = build.nom.toLowerCase().includes(lowerText);
+      const inDescription = build.description.toLowerCase().includes(lowerText);
+      const inAuteur = build.auteur.toLowerCase().includes(lowerText);
+      if (!inNom && !inDescription && !inAuteur) continue;
+    }
+
+    matched.push(build);
+  }
+
+  const total = matched.length;
+  const sorted = [...matched].sort((a, b) => b.timestamp - a.timestamp);
+  const builds = sorted.slice(offset, offset + limit);
+  return { builds, total };
+}
+
+export async function getTopBuilds(
+  env: Env,
+  text?: string,
+  tags?: string[],
+  auteurId?: string,
+  limit = 50,
+  offset = 0,
+): Promise<{ builds: Build[]; total: number }> {
+  return searchBuilds(env, text, tags, auteurId, limit, offset, true);
 }

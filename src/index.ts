@@ -15,6 +15,8 @@ import {
   deleteBuild,
   toggleLike,
   searchBuilds,
+  getRecentBuilds,
+  getTopBuilds,
 } from './builds';
 
 type Variables = { user?: JWTPayload };
@@ -124,8 +126,40 @@ app.get('/builds', async (c) => {
   const rawOffset = parseInt(c.req.query('offset') ?? '0', 10);
   const limit = Number.isNaN(rawLimit) || rawLimit < 1 ? 50 : Math.min(rawLimit, 200);
   const offset = Number.isNaN(rawOffset) || rawOffset < 0 ? 0 : rawOffset;
+  const disableRandom = c.req.query('random') === 'false';
 
-  const { builds, total } = await searchBuilds(c.env, text, tags, auteurId, limit, offset);
+  const { builds, total } = await searchBuilds(c.env, text, tags, auteurId, limit, offset, disableRandom);
+  return c.json({ builds, total, limit, offset });
+});
+
+// Builds – listes dédiées
+app.get('/builds/recent', async (c) => {
+  const text = c.req.query('text') ?? undefined;
+  const auteurId = c.req.query('auteurId') ?? undefined;
+  const tagsParam = c.req.query('tags');
+  const tags = tagsParam ? tagsParam.split(',').map((t) => t.trim()).filter(Boolean) : undefined;
+
+  const rawLimit = parseInt(c.req.query('limit') ?? '50', 10);
+  const rawOffset = parseInt(c.req.query('offset') ?? '0', 10);
+  const limit = Number.isNaN(rawLimit) || rawLimit < 1 ? 50 : Math.min(rawLimit, 200);
+  const offset = Number.isNaN(rawOffset) || rawOffset < 0 ? 0 : rawOffset;
+
+  const { builds, total } = await getRecentBuilds(c.env, text, tags, auteurId, limit, offset);
+  return c.json({ builds, total, limit, offset });
+});
+
+app.get('/builds/top', async (c) => {
+  const text = c.req.query('text') ?? undefined;
+  const auteurId = c.req.query('auteurId') ?? undefined;
+  const tagsParam = c.req.query('tags');
+  const tags = tagsParam ? tagsParam.split(',').map((t) => t.trim()).filter(Boolean) : undefined;
+
+  const rawLimit = parseInt(c.req.query('limit') ?? '50', 10);
+  const rawOffset = parseInt(c.req.query('offset') ?? '0', 10);
+  const limit = Number.isNaN(rawLimit) || rawLimit < 1 ? 50 : Math.min(rawLimit, 200);
+  const offset = Number.isNaN(rawOffset) || rawOffset < 0 ? 0 : rawOffset;
+
+  const { builds, total } = await getTopBuilds(c.env, text, tags, auteurId, limit, offset);
   return c.json({ builds, total, limit, offset });
 });
 
