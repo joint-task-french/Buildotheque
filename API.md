@@ -5,6 +5,11 @@ Cette API permet de gérer des "builds" (configurations) avec une authentificati
 ## Base URL
 La base URL de l'API dépend de l'environnement de déploiement (généralement fournie via la configuration Cloudflare).
 
+## Documentation Interactive (Swagger)
+Une interface Swagger UI est disponible pour tester l'API interactivement :
+- **Interface Swagger** : `/swagger`
+- **Spécification OpenAPI (JSON)** : `/doc`
+
 ## Authentification
 
 L'API utilise des jetons JWT pour l'authentification. Pour les routes protégées, vous devez inclure le jeton dans l'en-tête `Authorization`.
