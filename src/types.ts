@@ -69,4 +69,5 @@ export interface Env {
   DISCORD_REDIRECT_URI: string;
   JWT_SECRET: string;
   FRONTEND_URL: string;
+  ALLOWED_DOMAINS?: string;
 }
