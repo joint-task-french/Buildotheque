@@ -31,7 +31,7 @@ export async function createJWT(user: DiscordUser, secret: string): Promise<stri
   const hashedId = await hashDiscordId(user.id);
 
   const avatarUrl = user.avatar
-      ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png`
+      ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}`
       : undefined;
 
   const payload: JWTPayload = {
