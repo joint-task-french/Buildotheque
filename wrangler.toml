@@ -3,10 +3,10 @@ main = "src/index.ts"
 compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
 
-[[kv_namespaces]]
-binding = "BUILDS_KV"
-id = "cff3ba1444bd4addad4b4aef46334dd0"
-preview_id = "1c47f108cf6843c8a3ce61edf139986a"
+[[d1_databases]]
+binding = "DB"
+database_name = "buildotheque-db"
+database_id = "38c1e513-ff65-498b-9ec1-9bff5a506511"
 
 [vars]
 DISCORD_CLIENT_ID = "1491105232799928520"

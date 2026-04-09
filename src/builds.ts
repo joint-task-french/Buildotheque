@@ -1,66 +1,57 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { Build, BuildInput, Env } from './types';
 
-const BUILD_INDEX_KEY = 'build_index';
-
-function buildKey(id: string): string {
-  return `build:${id}`;
-}
-
-function likesKey(id: string): string {
-  return `likes:${id}`;
-}
-
-async function getBuildIndex(kv: KVNamespace): Promise<string[]> {
-  const raw = await kv.get(BUILD_INDEX_KEY);
-  if (!raw) return [];
-  return JSON.parse(raw) as string[];
-}
-
-async function saveBuildIndex(kv: KVNamespace, ids: string[]): Promise<void> {
-  await kv.put(BUILD_INDEX_KEY, JSON.stringify(ids));
-}
-
-async function getLikers(id: string, kv: KVNamespace): Promise<Set<string>> {
-  const raw = await kv.get(likesKey(id));
-  if (!raw) return new Set();
-  return new Set(JSON.parse(raw) as string[]);
-}
-
-async function saveLikers(id: string, likers: Set<string>, kv: KVNamespace): Promise<void> {
-  await kv.put(likesKey(id), JSON.stringify([...likers]));
-}
-
 export async function createBuild(
     input: BuildInput,
     authorId: string,
     env: Env,
 ): Promise<Build> {
   const id = uuidv4();
-  const build: Build = {
+  const timestamp = Date.now();
+  const auteur = input.auteur?.trim() || 'Anonymous';
+  const tags = input.tags ?? [];
+
+  await env.DB.prepare(
+      'INSERT INTO builds (id, nom, description, auteur, auteurId, encoded, likes, timestamp) VALUES (?, ?, ?, ?, ?, ?, 0, ?)'
+  )
+      .bind(id, input.nom, input.description, auteur, authorId, input.encoded, timestamp)
+      .run();
+
+  if (tags.length > 0) {
+    const statements = tags.map(tag =>
+        env.DB.prepare('INSERT INTO tags (build_id, tag) VALUES (?, ?)').bind(id, tag)
+    );
+    await env.DB.batch(statements);
+  }
+
+  return {
     id,
     nom: input.nom,
     description: input.description,
-    auteur: input.auteur?.trim() || 'Anonymous',
+    auteur,
     auteurId: authorId,
-    tags: input.tags ?? [],
+    tags,
     encoded: input.encoded,
     likes: 0,
-    timestamp: Date.now(),
+    timestamp,
   };
-
-  await env.BUILDS_KV.put(buildKey(id), JSON.stringify(build));
-  const index = await getBuildIndex(env.BUILDS_KV);
-  index.push(id);
-  await saveBuildIndex(env.BUILDS_KV, index);
-
-  return build;
 }
 
 export async function getBuild(id: string, env: Env): Promise<Build | null> {
-  const raw = await env.BUILDS_KV.get(buildKey(id));
-  if (!raw) return null;
-  return JSON.parse(raw) as Build;
+  const result = await env.DB.prepare(
+      `SELECT b.*, GROUP_CONCAT(t.tag) as tags_list 
+     FROM builds b 
+     LEFT JOIN tags t ON b.id = t.build_id 
+     WHERE b.id = ? 
+     GROUP BY b.id`
+  ).bind(id).first<any>();
+
+  if (!result) return null;
+
+  return {
+    ...result,
+    tags: result.tags_list ? result.tags_list.split(',') : [],
+  } as Build;
 }
 
 export async function updateBuild(
@@ -71,31 +62,36 @@ export async function updateBuild(
   const existing = await getBuild(id, env);
   if (!existing) return null;
 
-  const updated: Build = {
-    ...existing,
-    nom: input.nom ?? existing.nom,
-    description: input.description ?? existing.description,
-    auteur: input.auteur !== undefined ? (input.auteur.trim() || existing.auteur) : existing.auteur,
-    tags: input.tags ?? existing.tags,
-    encoded: input.encoded ?? existing.encoded,
-  };
+  const nom = input.nom ?? existing.nom;
+  const description = input.description ?? existing.description;
+  const auteur = input.auteur !== undefined ? (input.auteur.trim() || existing.auteur) : existing.auteur;
+  const encoded = input.encoded ?? existing.encoded;
+  const tags = input.tags ?? existing.tags;
 
-  await env.BUILDS_KV.put(buildKey(id), JSON.stringify(updated));
-  return updated;
+  await env.DB.prepare(
+      'UPDATE builds SET nom = ?, description = ?, auteur = ?, encoded = ? WHERE id = ?'
+  ).bind(nom, description, auteur, encoded, id).run();
+
+  if (input.tags !== undefined) {
+    await env.DB.prepare('DELETE FROM tags WHERE build_id = ?').bind(id).run();
+
+    if (tags.length > 0) {
+      const statements = tags.map(tag =>
+          env.DB.prepare('INSERT INTO tags (build_id, tag) VALUES (?, ?)').bind(id, tag)
+      );
+      await env.DB.batch(statements);
+    }
+  }
+
+  return { ...existing, nom, description, auteur, encoded, tags };
 }
 
 export async function deleteBuild(id: string, env: Env): Promise<boolean> {
-  const existing = await getBuild(id, env);
-  if (!existing) return false;
+  await env.DB.prepare('DELETE FROM tags WHERE build_id = ?').bind(id).run();
+  await env.DB.prepare('DELETE FROM build_likes WHERE build_id = ?').bind(id).run();
+  const result = await env.DB.prepare('DELETE FROM builds WHERE id = ?').bind(id).run();
 
-  await env.BUILDS_KV.delete(buildKey(id));
-  await env.BUILDS_KV.delete(likesKey(id));
-
-  const index = await getBuildIndex(env.BUILDS_KV);
-  const newIndex = index.filter((i) => i !== id);
-  await saveBuildIndex(env.BUILDS_KV, newIndex);
-
-  return true;
+  return result.meta.changes > 0;
 }
 
 export async function toggleLike(
@@ -106,22 +102,25 @@ export async function toggleLike(
   const existing = await getBuild(id, env);
   if (!existing) return null;
 
-  const likers = await getLikers(id, env.BUILDS_KV);
-  const alreadyLiked = likers.has(userId);
+  const alreadyLiked = await env.DB.prepare(
+      'SELECT 1 FROM build_likes WHERE build_id = ? AND user_id = ?'
+  ).bind(id, userId).first();
 
   if (alreadyLiked) {
-    likers.delete(userId);
+    await env.DB.prepare('DELETE FROM build_likes WHERE build_id = ? AND user_id = ?').bind(id, userId).run();
   } else {
-    likers.add(userId);
+    await env.DB.prepare('INSERT INTO build_likes (build_id, user_id) VALUES (?, ?)').bind(id, userId).run();
   }
 
-  const liked = !alreadyLiked;
-  const build: Build = { ...existing, likes: likers.size };
+  const countResult = await env.DB.prepare(
+      'SELECT COUNT(*) as count FROM build_likes WHERE build_id = ?'
+  ).bind(id).first<{count: number}>();
 
-  await env.BUILDS_KV.put(buildKey(id), JSON.stringify(build));
-  await saveLikers(id, likers, env.BUILDS_KV);
+  const newLikes = countResult?.count ?? 0;
 
-  return { build, liked };
+  await env.DB.prepare('UPDATE builds SET likes = ? WHERE id = ?').bind(newLikes, id).run();
+
+  return { build: { ...existing, likes: newLikes }, liked: !alreadyLiked };
 }
 
 export async function searchBuilds(
@@ -133,107 +132,115 @@ export async function searchBuilds(
     offset = 0,
     disableRandom = false,
 ): Promise<{ builds: Build[]; total: number }> {
-  const index = await getBuildIndex(env.BUILDS_KV);
-  const matched: Build[] = [];
-  const lowerText = text?.toLowerCase().trim();
+  let query = `
+    SELECT b.*, GROUP_CONCAT(t.tag) as tags_list 
+    FROM builds b 
+    LEFT JOIN tags t ON b.id = t.build_id 
+    WHERE 1=1
+  `;
+  const params: any[] = [];
 
-  for (const id of index) {
-    const build = await getBuild(id, env);
-    if (!build) continue;
+  if (auteurId) {
+    query += ` AND b.auteurId = ?`;
+    params.push(auteurId);
+  }
 
-    if (auteurId && build.auteurId !== auteurId) continue;
+  if (text) {
+    query += ` AND (b.nom LIKE ? OR b.description LIKE ? OR b.auteur LIKE ?)`;
+    const t = `%${text}%`;
+    params.push(t, t, t);
+  }
 
-    if (tags && tags.length > 0) {
-      const hasAllTags = tags.every((tag) => build.tags.includes(tag));
-      if (!hasAllTags) continue;
+  if (tags && tags.length > 0) {
+    for (const tag of tags) {
+      query += ` AND EXISTS (SELECT 1 FROM tags WHERE build_id = b.id AND tag = ?)`;
+      params.push(tag);
     }
-
-    if (lowerText) {
-      const inNom = build.nom.toLowerCase().includes(lowerText);
-      const inDescription = build.description.toLowerCase().includes(lowerText);
-      const inAuteur = build.auteur.toLowerCase().includes(lowerText);
-      if (!inNom && !inDescription && !inAuteur) continue;
-    }
-
-    matched.push(build);
   }
 
-  const total = matched.length;
+  query += ` GROUP BY b.id`;
 
-  if (disableRandom || total <= limit) {
-    const sorted = [...matched].sort((a, b) => b.likes - a.likes);
-    const builds = sorted.slice(offset, offset + limit);
-    return { builds, total };
+  const countQuery = `SELECT COUNT(*) as count FROM (${query})`;
+  const totalResult = await env.DB.prepare(countQuery).bind(...params).first<{count: number}>();
+  const total = totalResult?.count ?? 0;
+
+  if (!disableRandom) {
+    query += ` ORDER BY RANDOM()`;
+  } else {
+    query += ` ORDER BY b.likes DESC`;
   }
 
-  const likesCount = Math.floor(limit * 0.75);
-  const randomCount = limit - likesCount;
+  query += ` LIMIT ? OFFSET ?`;
+  params.push(limit, offset);
 
-  const sortedByLikes = [...matched].sort((a, b) => b.likes - a.likes);
-
-  const topLikes = sortedByLikes.slice(0, likesCount);
-  const topLikesIds = new Set(topLikes.map(b => b.id));
-
-  const remaining = matched.filter(b => !topLikesIds.has(b.id));
-
-  for (let i = remaining.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [remaining[i], remaining[j]] = [remaining[j], remaining[i]];
-  }
-
-  const randomBuilds = remaining.slice(0, randomCount);
-
-  let builds = [...topLikes, ...randomBuilds];
+  const { results } = await env.DB.prepare(query).bind(...params).all<any>();
+  const builds = results.map(r => ({
+    ...r,
+    tags: r.tags_list ? r.tags_list.split(',') : []
+  })) as Build[];
 
   return { builds, total };
 }
 
 export async function getRecentBuilds(
-  env: Env,
-  text?: string,
-  tags?: string[],
-  auteurId?: string,
-  limit = 50,
-  offset = 0,
+    env: Env,
+    text?: string,
+    tags?: string[],
+    auteurId?: string,
+    limit = 50,
+    offset = 0,
 ): Promise<{ builds: Build[]; total: number }> {
-  const index = await getBuildIndex(env.BUILDS_KV);
-  const matched: Build[] = [];
-  const lowerText = text?.toLowerCase().trim();
+  let query = `
+    SELECT b.*, GROUP_CONCAT(t.tag) as tags_list 
+    FROM builds b 
+    LEFT JOIN tags t ON b.id = t.build_id 
+    WHERE 1=1
+  `;
+  const params: any[] = [];
 
-  for (const id of index) {
-    const build = await getBuild(id, env);
-    if (!build) continue;
-
-    if (auteurId && build.auteurId !== auteurId) continue;
-
-    if (tags && tags.length > 0) {
-      const hasAllTags = tags.every((tag) => build.tags.includes(tag));
-      if (!hasAllTags) continue;
-    }
-
-    if (lowerText) {
-      const inNom = build.nom.toLowerCase().includes(lowerText);
-      const inDescription = build.description.toLowerCase().includes(lowerText);
-      const inAuteur = build.auteur.toLowerCase().includes(lowerText);
-      if (!inNom && !inDescription && !inAuteur) continue;
-    }
-
-    matched.push(build);
+  if (auteurId) {
+    query += ` AND b.auteurId = ?`;
+    params.push(auteurId);
   }
 
-  const total = matched.length;
-  const sorted = [...matched].sort((a, b) => b.timestamp - a.timestamp);
-  const builds = sorted.slice(offset, offset + limit);
+  if (text) {
+    query += ` AND (b.nom LIKE ? OR b.description LIKE ? OR b.auteur LIKE ?)`;
+    const t = `%${text}%`;
+    params.push(t, t, t);
+  }
+
+  if (tags && tags.length > 0) {
+    for (const tag of tags) {
+      query += ` AND EXISTS (SELECT 1 FROM tags WHERE build_id = b.id AND tag = ?)`;
+      params.push(tag);
+    }
+  }
+
+  query += ` GROUP BY b.id`;
+
+  const countQuery = `SELECT COUNT(*) as count FROM (${query})`;
+  const totalResult = await env.DB.prepare(countQuery).bind(...params).first<{count: number}>();
+  const total = totalResult?.count ?? 0;
+
+  query += ` ORDER BY b.timestamp DESC LIMIT ? OFFSET ?`;
+  params.push(limit, offset);
+
+  const { results } = await env.DB.prepare(query).bind(...params).all<any>();
+  const builds = results.map(r => ({
+    ...r,
+    tags: r.tags_list ? r.tags_list.split(',') : []
+  })) as Build[];
+
   return { builds, total };
 }
 
 export async function getTopBuilds(
-  env: Env,
-  text?: string,
-  tags?: string[],
-  auteurId?: string,
-  limit = 50,
-  offset = 0,
+    env: Env,
+    text?: string,
+    tags?: string[],
+    auteurId?: string,
+    limit = 50,
+    offset = 0,
 ): Promise<{ builds: Build[]; total: number }> {
   return searchBuilds(env, text, tags, auteurId, limit, offset, true);
 }
