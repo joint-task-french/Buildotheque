@@ -63,7 +63,7 @@ export interface JWTPayload {
 
 /** Cloudflare Workers environment bindings. */
 export interface Env {
-  BUILDS_KV: KVNamespace;
+  DB: D1Database;
   DISCORD_CLIENT_ID: string;
   DISCORD_CLIENT_SECRET: string;
   DISCORD_REDIRECT_URI: string;
