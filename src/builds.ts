@@ -39,11 +39,11 @@ export async function createBuild(
 
 export async function getBuild(id: string, env: Env): Promise<Build | null> {
   const result = await env.DB.prepare(
-      `SELECT b.*, GROUP_CONCAT(t.tag) as tags_list 
-     FROM builds b 
-     LEFT JOIN tags t ON b.id = t.build_id 
-     WHERE b.id = ? 
-     GROUP BY b.id`
+      `SELECT b.*, GROUP_CONCAT(t.tag) as tags_list
+       FROM builds b
+              LEFT JOIN tags t ON b.id = t.build_id
+       WHERE b.id = ?
+       GROUP BY b.id`
   ).bind(id).first<any>();
 
   if (!result) return null;
@@ -109,7 +109,8 @@ export async function toggleLike(
   if (alreadyLiked) {
     await env.DB.prepare('DELETE FROM build_likes WHERE build_id = ? AND user_id = ?').bind(id, userId).run();
   } else {
-    await env.DB.prepare('INSERT INTO build_likes (build_id, user_id) VALUES (?, ?)').bind(id, userId).run();
+    const timestamp = Date.now();
+    await env.DB.prepare('INSERT INTO build_likes (build_id, user_id, timestamp) VALUES (?, ?, ?)').bind(id, userId, timestamp).run();
   }
 
   const countResult = await env.DB.prepare(
@@ -123,19 +124,112 @@ export async function toggleLike(
   return { build: { ...existing, likes: newLikes }, liked: !alreadyLiked };
 }
 
-export async function searchBuilds(
+
+type SearchCondition = {
+  field: string;
+  value: string | number;
+  operator: 'LIKE' | '=' | '>' | '<' | '>=' | '<=';
+};
+
+function parseAdvancedSearch(text: string) {
+  const parts = text.split(';');
+  const conditions: SearchCondition[] = [];
+  const freeText: string[] = [];
+
+  let hasOperator = false;
+  for (const part of parts) {
+    const colonIndex = part.indexOf(':');
+    if (colonIndex === -1) {
+      if (part.trim()) freeText.push(part.trim());
+      continue;
+    }
+
+    const key = part.substring(0, colonIndex).trim().toLowerCase();
+    let value = part.substring(colonIndex + 1).trim();
+
+    if (!value) {
+      if (part.trim()) freeText.push(part.trim());
+      continue;
+    }
+
+    hasOperator = true;
+    let field = '';
+    let operator: 'LIKE' | '=' | '>' | '<' | '>=' | '<=' = 'LIKE';
+
+    switch (key) {
+      case 'nom':
+      case 'name':
+        field = 'b.nom';
+        break;
+      case 'description':
+      case 'desc':
+        field = 'b.description';
+        break;
+      case 'auteur':
+      case 'author':
+      case 'pseudo':
+        field = 'b.auteur';
+        break;
+      case 'likes':
+        field = 'b.likes';
+        operator = '=';
+        break;
+      case 'timestamp':
+      case 'date':
+        field = 'b.timestamp';
+        operator = '=';
+        break;
+      default:
+        freeText.push(part.trim());
+        continue;
+    }
+
+    if (field === 'b.likes' || field === 'b.timestamp') {
+      const match = value.match(/^([><]=?|=)(.+)$/);
+      if (match) {
+        operator = match[1] as any;
+        value = match[2].trim();
+      }
+
+      if (field === 'b.timestamp' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        const date = new Date(value);
+        if (!isNaN(date.getTime())) {
+          const start = date.getTime();
+          if (operator === '=') {
+            conditions.push({ field, value: start, operator: '>=' });
+            conditions.push({ field, value: start + 86400000, operator: '<' });
+          } else {
+            conditions.push({ field, value: start, operator });
+          }
+          continue;
+        }
+      }
+
+      const numValue = parseInt(value, 10);
+      if (!isNaN(numValue)) {
+        conditions.push({ field, value: numValue, operator });
+      }
+    } else {
+      conditions.push({ field, value: `%${value}%`, operator: 'LIKE' });
+    }
+  }
+
+  return { conditions, freeText, hasOperator };
+}
+
+async function getBuildsInternal(
     env: Env,
     text?: string,
     tags?: string[],
     auteurId?: string,
+    order: 'random' | 'likes' | 'recent' = 'random',
     limit = 50,
     offset = 0,
-    disableRandom = false,
 ): Promise<{ builds: Build[]; total: number }> {
   let query = `
-    SELECT b.*, GROUP_CONCAT(t.tag) as tags_list 
-    FROM builds b 
-    LEFT JOIN tags t ON b.id = t.build_id 
+    SELECT b.*, GROUP_CONCAT(t.tag) as tags_list
+    FROM builds b
+           LEFT JOIN tags t ON b.id = t.build_id
     WHERE 1=1
   `;
   const params: any[] = [];
@@ -146,9 +240,27 @@ export async function searchBuilds(
   }
 
   if (text) {
-    query += ` AND (b.nom LIKE ? OR b.description LIKE ? OR b.auteur LIKE ?)`;
-    const t = `%${text}%`;
-    params.push(t, t, t);
+    const { conditions, freeText, hasOperator } = parseAdvancedSearch(text);
+
+    if (hasOperator || freeText.length > 0) {
+      // Handle advanced conditions
+      for (const cond of conditions) {
+        query += ` AND ${cond.field} ${cond.operator} ?`;
+        params.push(cond.value);
+      }
+
+      // Handle free text
+      for (const term of freeText) {
+        query += ` AND (b.nom LIKE ? OR b.description LIKE ? OR b.auteur LIKE ?)`;
+        const t = `%${term}%`;
+        params.push(t, t, t);
+      }
+    } else {
+      // Fallback to classic search if no operator found (though parseAdvancedSearch should handle it via freeText)
+      query += ` AND (b.nom LIKE ? OR b.description LIKE ? OR b.auteur LIKE ?)`;
+      const t = `%${text}%`;
+      params.push(t, t, t);
+    }
   }
 
   if (tags && tags.length > 0) {
@@ -164,10 +276,12 @@ export async function searchBuilds(
   const totalResult = await env.DB.prepare(countQuery).bind(...params).first<{count: number}>();
   const total = totalResult?.count ?? 0;
 
-  if (!disableRandom) {
+  if (order === 'random') {
     query += ` ORDER BY RANDOM()`;
-  } else {
+  } else if (order === 'likes') {
     query += ` ORDER BY b.likes DESC`;
+  } else {
+    query += ` ORDER BY b.timestamp DESC`;
   }
 
   query += ` LIMIT ? OFFSET ?`;
@@ -182,6 +296,18 @@ export async function searchBuilds(
   return { builds, total };
 }
 
+export async function searchBuilds(
+    env: Env,
+    text?: string,
+    tags?: string[],
+    auteurId?: string,
+    limit = 50,
+    offset = 0,
+    disableRandom = false,
+): Promise<{ builds: Build[]; total: number }> {
+  return getBuildsInternal(env, text, tags, auteurId, disableRandom ? 'likes' : 'random', limit, offset);
+}
+
 export async function getRecentBuilds(
     env: Env,
     text?: string,
@@ -190,48 +316,7 @@ export async function getRecentBuilds(
     limit = 50,
     offset = 0,
 ): Promise<{ builds: Build[]; total: number }> {
-  let query = `
-    SELECT b.*, GROUP_CONCAT(t.tag) as tags_list 
-    FROM builds b 
-    LEFT JOIN tags t ON b.id = t.build_id 
-    WHERE 1=1
-  `;
-  const params: any[] = [];
-
-  if (auteurId) {
-    query += ` AND b.auteurId = ?`;
-    params.push(auteurId);
-  }
-
-  if (text) {
-    query += ` AND (b.nom LIKE ? OR b.description LIKE ? OR b.auteur LIKE ?)`;
-    const t = `%${text}%`;
-    params.push(t, t, t);
-  }
-
-  if (tags && tags.length > 0) {
-    for (const tag of tags) {
-      query += ` AND EXISTS (SELECT 1 FROM tags WHERE build_id = b.id AND tag = ?)`;
-      params.push(tag);
-    }
-  }
-
-  query += ` GROUP BY b.id`;
-
-  const countQuery = `SELECT COUNT(*) as count FROM (${query})`;
-  const totalResult = await env.DB.prepare(countQuery).bind(...params).first<{count: number}>();
-  const total = totalResult?.count ?? 0;
-
-  query += ` ORDER BY b.timestamp DESC LIMIT ? OFFSET ?`;
-  params.push(limit, offset);
-
-  const { results } = await env.DB.prepare(query).bind(...params).all<any>();
-  const builds = results.map(r => ({
-    ...r,
-    tags: r.tags_list ? r.tags_list.split(',') : []
-  })) as Build[];
-
-  return { builds, total };
+  return getBuildsInternal(env, text, tags, auteurId, 'recent', limit, offset);
 }
 
 export async function getTopBuilds(
