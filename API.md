@@ -48,12 +48,29 @@ Récupère les informations de l'utilisateur connecté.
 Récupère une liste de builds selon plusieurs critères.
 
 **Paramètres de requête (Query params) :**
-- `text` (string, optionnel) : Recherche par nom ou description.
+- `text` (string, optionnel) : Recherche par nom ou description. Supporte la **recherche avancée** (voir section dédiée).
 - `auteurId` (string, optionnel) : Filtre par identifiant d'auteur (ID Discord haché).
 - `tags` (string, optionnel) : Liste de tags séparés par des virgules (ex: `pve,tank`).
 - `limit` (number, défaut: 50, max: 200) : Nombre de résultats.
 - `offset` (number, défaut: 0) : Pagination.
 - `random` (boolean, défaut: true) : Si `false`, désactive le tri aléatoire (selon l'implémentation interne).
+
+#### Recherche Avancée
+Le paramètre `text` permet d'utiliser des opérateurs pour des recherches plus précises. Les conditions sont séparées par des points-virgules (`;`).
+
+**Opérateurs disponibles :**
+- `nom:` ou `name:` : Filtre par nom.
+- `description:` ou `desc:` : Filtre par description.
+- `auteur:`, `author:` ou `pseudo:` : Filtre par nom d'auteur.
+- `likes:` : Filtre par nombre de likes. Supporte les opérateurs comparatifs (`>`, `<`, `>=`, `<=`).
+- `timestamp:` ou `date:` : Filtre par date ou timestamp (ms). Supporte le format `YYYY-MM-DD` et les opérateurs comparatifs.
+
+**Exemples :**
+- `description:dégats;author:ocelus` : Recherche les builds dont la description contient "dégats" et l'auteur est "ocelus".
+- `date:>2026-01-01;likes:>10` : Recherche les builds créés après le 1er janvier 2026 et ayant plus de 10 likes.
+- `super build;author:ocelus` : Recherche "super build" en texte libre tout en filtrant par l'auteur "ocelus".
+
+Si aucun opérateur n'est présent, la recherche classique s'applique sur le nom, la description et l'auteur.
 
 **Réponse (200 OK) :**
 ```json

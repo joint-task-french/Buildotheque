@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS tags (
 CREATE TABLE IF NOT EXISTS build_likes (
                                            build_id TEXT,
                                            user_id TEXT,
+                                           timestamp INTEGER NOT NULL,
                                            PRIMARY KEY (build_id, user_id),
     FOREIGN KEY (build_id) REFERENCES builds(id) ON DELETE CASCADE
     );
