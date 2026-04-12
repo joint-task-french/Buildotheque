@@ -36,7 +36,17 @@ npx wrangler d1 execute buildotheque-db --local --file=./schema.sql
 # For production deployment
 npx wrangler d1 execute buildotheque-db --remote --file=./schema.sql</code></pre>
 
-<h3>3. Configure environment variables</h3>
+<h3>3. Apply migrations (for existing databases)</h3>
+
+<p>If you already have a database and want to update it to the latest version:</p>
+
+<pre><code class="language-bash"># For local development
+npx wrangler d1 migrations apply buildotheque-db --local
+
+# For production deployment
+npx wrangler d1 migrations apply buildotheque-db --remote</code></pre>
+
+<h3>4. Configure environment variables</h3>
 
 <p>Edit <code>wrangler.toml</code> and set:</p>
 

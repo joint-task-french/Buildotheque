@@ -1,6 +1,9 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { swaggerUI } from '@hono/swagger-ui';
+import { openapiDoc } from './openapi';
+import { Context } from 'hono';
+import { BuildSchema } from './types';
 import type { Env, JWTPayload } from './types';
 import {
   authMiddleware,
@@ -20,7 +23,7 @@ import {
   getTopBuilds,
 } from './builds';
 
-type Variables = { user?: JWTPayload };
+type Variables = { user: JWTPayload };
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -111,6 +114,23 @@ app.use('*', async (c, next) => {
 // Attach user from JWT when present (non-blocking)
 app.use('*', authMiddleware);
 
+/**
+ * Parse les paramètres communs de recherche de builds.
+ */
+function parseSearchParams(c: Context) {
+  const text = c.req.query('text') ?? undefined;
+  const auteurId = c.req.query('auteurId') ?? undefined;
+  const tagsParam = c.req.query('tags');
+  const tags = tagsParam ? tagsParam.split(',').map((t: string) => t.trim()).filter(Boolean) : undefined;
+
+  const rawLimit = parseInt(c.req.query('limit') ?? '50', 10);
+  const rawOffset = parseInt(c.req.query('offset') ?? '0', 10);
+  const limit = Number.isNaN(rawLimit) || rawLimit < 1 ? 50 : Math.min(rawLimit, 200);
+  const offset = Number.isNaN(rawOffset) || rawOffset < 0 ? 0 : rawOffset;
+
+  return { text, auteurId, tags, limit, offset };
+}
+
 // ---------------------------------------------------------------------------
 // Health check
 // ---------------------------------------------------------------------------
@@ -195,7 +215,7 @@ app.get('/auth/discord/callback', async (c) => {
 });
 
 app.get('/auth/me', requireAuth, (c) => {
-  const user = c.get('user') as JWTPayload;
+  const user = c.get('user');
   return c.json({ id: user.sub, username: user.username, avatar: user.avatar ?? null });
 });
 
@@ -206,244 +226,7 @@ app.get('/auth/me', requireAuth, (c) => {
 app.get('/swagger', swaggerUI({ url: '/doc' }));
 
 app.get('/doc', (c) => {
-  return c.json({
-    openapi: '3.0.0',
-    info: {
-      title: 'Buildotheque API',
-      version: '1.0.0',
-      description: 'API pour gérer les builds avec authentification Discord.',
-    },
-    servers: [
-      {
-        url: '{protocol}://{host}',
-        variables: {
-          protocol: { default: 'https' },
-          host: { default: 'api.buildotheque.com' },
-        },
-      },
-    ],
-    components: {
-      securitySchemes: {
-        BearerAuth: {
-          type: 'http',
-          scheme: 'bearer',
-          bearerFormat: 'JWT',
-        },
-      },
-      schemas: {
-        Build: {
-          type: 'object',
-          properties: {
-            id: { type: 'string' },
-            nom: { type: 'string' },
-            description: { type: 'string' },
-            auteur: { type: 'string' },
-            auteurId: { type: 'string' },
-            tags: { type: 'array', items: { type: 'string' } },
-            encoded: { type: 'string' },
-            likes: { type: 'integer' },
-            timestamp: { type: 'integer' },
-          },
-        },
-        User: {
-          type: 'object',
-          properties: {
-            id: { type: 'string' },
-            username: { type: 'string' },
-            avatar: { type: 'string', nullable: true },
-          },
-        },
-      },
-    },
-    paths: {
-      '/': {
-        get: {
-          summary: 'Vérifier la santé de l\'API',
-          responses: {
-            200: {
-              description: 'OK',
-              content: { 'application/json': { schema: { type: 'object', properties: { status: { type: 'string' }, name: { type: 'string' } } } } },
-            },
-          },
-        },
-      },
-      '/auth/discord': {
-        get: {
-          summary: 'Redirection vers Discord OAuth2',
-          parameters: [
-            { name: 'state', in: 'query', schema: { type: 'string' } },
-            { name: 'returnUrl', in: 'query', schema: { type: 'string' }, description: 'URL de redirection personnalisée après connexion' }
-          ],
-          responses: { 302: { description: 'Redirection vers Discord' } },
-        },
-      },
-      '/auth/me': {
-        get: {
-          summary: 'Récupérer l\'utilisateur connecté',
-          security: [{ BearerAuth: [] }],
-          responses: {
-            200: { description: 'Succès', content: { 'application/json': { schema: { $ref: '#/components/schemas/User' } } } },
-            401: { description: 'Non authentifié' },
-          },
-        },
-      },
-      '/builds': {
-        get: {
-          summary: 'Rechercher des builds',
-          parameters: [
-            { name: 'text', in: 'query', schema: { type: 'string' } },
-            { name: 'auteurId', in: 'query', schema: { type: 'string' } },
-            { name: 'tags', in: 'query', schema: { type: 'string' }, description: 'Tags séparés par des virgules' },
-            { name: 'limit', in: 'query', schema: { type: 'integer', default: 50 } },
-            { name: 'offset', in: 'query', schema: { type: 'integer', default: 0 } },
-            { name: 'random', in: 'query', schema: { type: 'boolean', default: true } },
-          ],
-          responses: {
-            200: {
-              description: 'Liste de builds',
-              content: {
-                'application/json': {
-                  schema: {
-                    type: 'object',
-                    properties: {
-                      builds: { type: 'array', items: { $ref: '#/components/schemas/Build' } },
-                      total: { type: 'integer' },
-                      limit: { type: 'integer' },
-                      offset: { type: 'integer' },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-        post: {
-          summary: 'Créer un nouveau build',
-          security: [{ BearerAuth: [] }],
-          requestBody: {
-            required: true,
-            content: {
-              'application/json': {
-                schema: {
-                  type: 'object',
-                  required: ['nom', 'description', 'encoded'],
-                  properties: {
-                    nom: { type: 'string', maxLength: 25 },
-                    description: { type: 'string', maxLength: 250 },
-                    auteur: { type: 'string', maxLength: 25 },
-                    tags: { type: 'array', items: { type: 'string', maxLength: 25 }, maxItems: 5 },
-                    encoded: { type: 'string', maxLength: 8000 },
-                  },
-                },
-              },
-            },
-          },
-          responses: {
-            201: { description: 'Créé', content: { 'application/json': { schema: { $ref: '#/components/schemas/Build' } } } },
-            400: { description: 'Requête invalide' },
-            401: { description: 'Non authentifié' },
-          },
-        },
-      },
-      '/builds/{id}': {
-        get: {
-          summary: 'Récupérer un build par ID',
-          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-          responses: {
-            200: { description: 'Succès', content: { 'application/json': { schema: { $ref: '#/components/schemas/Build' } } } },
-            404: { description: 'Non trouvé' },
-          },
-        },
-        put: {
-          summary: 'Modifier un build',
-          security: [{ BearerAuth: [] }],
-          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-          requestBody: {
-            content: {
-              'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: {
-                    nom: { type: 'string', maxLength: 25 },
-                    description: { type: 'string', maxLength: 250 },
-                    auteur: { type: 'string', maxLength: 25 },
-                    tags: { type: 'array', items: { type: 'string', maxLength: 25 }, maxItems: 5 },
-                    encoded: { type: 'string', maxLength: 8000 },
-                  },
-                },
-              },
-            },
-          },
-          responses: {
-            200: { description: 'Mis à jour', content: { 'application/json': { schema: { $ref: '#/components/schemas/Build' } } } },
-            400: { description: 'Requête invalide' },
-            401: { description: 'Non authentifié' },
-            403: { description: 'Interdit' },
-            404: { description: 'Non trouvé' },
-          },
-        },
-        delete: {
-          summary: 'Supprimer un build',
-          security: [{ BearerAuth: [] }],
-          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-          responses: {
-            200: { description: 'Supprimé' },
-            401: { description: 'Non authentifié' },
-            403: { description: 'Interdit' },
-            404: { description: 'Non trouvé' },
-          },
-        },
-      },
-      '/builds/{id}/like': {
-        post: {
-          summary: 'Liker/Unliker un build',
-          security: [{ BearerAuth: [] }],
-          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-          responses: {
-            200: {
-              description: 'Succès',
-              content: {
-                'application/json': {
-                  schema: {
-                    type: 'object',
-                    properties: { likes: { type: 'integer' }, liked: { type: 'boolean' } },
-                  },
-                },
-              },
-            },
-            401: { description: 'Non authentifié' },
-            404: { description: 'Non trouvé' },
-          },
-        },
-      },
-      '/builds/recent': {
-        get: {
-          summary: 'Récupérer les builds récents',
-          parameters: [
-            { name: 'text', in: 'query', schema: { type: 'string' } },
-            { name: 'auteurId', in: 'query', schema: { type: 'string' } },
-            { name: 'tags', in: 'query', schema: { type: 'string' } },
-            { name: 'limit', in: 'query', schema: { type: 'integer', default: 50 } },
-            { name: 'offset', in: 'query', schema: { type: 'integer', default: 0 } },
-          ],
-          responses: { 200: { description: 'Succès', content: { 'application/json': { schema: { type: 'object', properties: { builds: { type: 'array', items: { $ref: '#/components/schemas/Build' } }, total: { type: 'integer' }, limit: { type: 'integer' }, offset: { type: 'integer' } } } } } } },
-        },
-      },
-      '/builds/top': {
-        get: {
-          summary: 'Récupérer les tops builds',
-          parameters: [
-            { name: 'text', in: 'query', schema: { type: 'string' } },
-            { name: 'auteurId', in: 'query', schema: { type: 'string' } },
-            { name: 'tags', in: 'query', schema: { type: 'string' } },
-            { name: 'limit', in: 'query', schema: { type: 'integer', default: 50 } },
-            { name: 'offset', in: 'query', schema: { type: 'integer', default: 0 } },
-          ],
-          responses: { 200: { description: 'Succès', content: { 'application/json': { schema: { type: 'object', properties: { builds: { type: 'array', items: { $ref: '#/components/schemas/Build' } }, total: { type: 'integer' }, limit: { type: 'integer' }, offset: { type: 'integer' } } } } } } },
-        },
-      },
-    },
-  });
+  return c.json(openapiDoc);
 });
 
 // ---------------------------------------------------------------------------
@@ -451,54 +234,52 @@ app.get('/doc', (c) => {
 // ---------------------------------------------------------------------------
 
 app.get('/builds', async (c) => {
-  const text = c.req.query('text') ?? undefined;
-  const auteurId = c.req.query('auteurId') ?? undefined;
-  const tagsParam = c.req.query('tags');
-  const tags = tagsParam ? tagsParam.split(',').map((t) => t.trim()).filter(Boolean) : undefined;
-
-  const rawLimit = parseInt(c.req.query('limit') ?? '50', 10);
-  const rawOffset = parseInt(c.req.query('offset') ?? '0', 10);
-  const limit = Number.isNaN(rawLimit) || rawLimit < 1 ? 50 : Math.min(rawLimit, 200);
-  const offset = Number.isNaN(rawOffset) || rawOffset < 0 ? 0 : rawOffset;
+  const params = parseSearchParams(c);
   const disableRandom = c.req.query('random') === 'false';
 
-  const { builds, total } = await searchBuilds(c.env, text, tags, auteurId, limit, offset, disableRandom);
-  return c.json({ builds, total, limit, offset });
+  const { builds, total } = await searchBuilds(
+      c.env,
+      params.text,
+      params.tags,
+      params.auteurId,
+      params.limit,
+      params.offset,
+      disableRandom
+  );
+  return c.json({ builds, total, limit: params.limit, offset: params.offset });
 });
 
 // Builds – listes dédiées
 app.get('/builds/recent', async (c) => {
-  const text = c.req.query('text') ?? undefined;
-  const auteurId = c.req.query('auteurId') ?? undefined;
-  const tagsParam = c.req.query('tags');
-  const tags = tagsParam ? tagsParam.split(',').map((t) => t.trim()).filter(Boolean) : undefined;
+  const params = parseSearchParams(c);
 
-  const rawLimit = parseInt(c.req.query('limit') ?? '50', 10);
-  const rawOffset = parseInt(c.req.query('offset') ?? '0', 10);
-  const limit = Number.isNaN(rawLimit) || rawLimit < 1 ? 50 : Math.min(rawLimit, 200);
-  const offset = Number.isNaN(rawOffset) || rawOffset < 0 ? 0 : rawOffset;
-
-  const { builds, total } = await getRecentBuilds(c.env, text, tags, auteurId, limit, offset);
-  return c.json({ builds, total, limit, offset });
+  const { builds, total } = await getRecentBuilds(
+      c.env,
+      params.text,
+      params.tags,
+      params.auteurId,
+      params.limit,
+      params.offset
+  );
+  return c.json({ builds, total, limit: params.limit, offset: params.offset });
 });
 
 app.get('/builds/top', async (c) => {
-  const text = c.req.query('text') ?? undefined;
-  const auteurId = c.req.query('auteurId') ?? undefined;
-  const tagsParam = c.req.query('tags');
-  const tags = tagsParam ? tagsParam.split(',').map((t) => t.trim()).filter(Boolean) : undefined;
+  const params = parseSearchParams(c);
 
-  const rawLimit = parseInt(c.req.query('limit') ?? '50', 10);
-  const rawOffset = parseInt(c.req.query('offset') ?? '0', 10);
-  const limit = Number.isNaN(rawLimit) || rawLimit < 1 ? 50 : Math.min(rawLimit, 200);
-  const offset = Number.isNaN(rawOffset) || rawOffset < 0 ? 0 : rawOffset;
-
-  const { builds, total } = await getTopBuilds(c.env, text, tags, auteurId, limit, offset);
-  return c.json({ builds, total, limit, offset });
+  const { builds, total } = await getTopBuilds(
+      c.env,
+      params.text,
+      params.tags,
+      params.auteurId,
+      params.limit,
+      params.offset
+  );
+  return c.json({ builds, total, limit: params.limit, offset: params.offset });
 });
 
 app.post('/builds', requireAuth, async (c) => {
-  const user = c.get('user') as JWTPayload;
+  const user = c.get('user');
 
   let body: unknown;
   try {
@@ -507,73 +288,19 @@ app.post('/builds', requireAuth, async (c) => {
     return c.json({ error: 'Corps de requête JSON invalide' }, 400);
   }
 
-  if (
-      typeof body !== 'object' ||
-      body === null ||
-      !('nom' in body) ||
-      !('description' in body) ||
-      !('encoded' in body)
-  ) {
-    return c.json({ error: 'Champs requis manquants : nom, description, encoded' }, 400);
+  const result = BuildSchema.safeParse(body);
+  if (!result.success) {
+    return c.json({ error: result.error.issues[0].message }, 400);
   }
 
-  const input = body as {
-    nom: unknown;
-    description: unknown;
-    auteur?: unknown;
-    tags?: unknown;
-    encoded: unknown;
-  };
-
-  if (typeof input.nom !== 'string' || input.nom.trim() === '') {
-    return c.json({ error: 'Le champ "nom" doit être une chaîne non vide' }, 400);
-  }
-  if (input.nom.length > 25) {
-    return c.json({ error: 'Le champ "nom" ne peut pas dépasser 25 caractères' }, 400);
-  }
-  if (typeof input.description !== 'string') {
-    return c.json({ error: 'Le champ "description" doit être une chaîne' }, 400);
-  }
-  if (input.description.length > 250) {
-    return c.json({ error: 'Le champ "description" ne peut pas dépasser 250 caractères' }, 400);
-  }
-  if (input.auteur !== undefined) {
-    if (typeof input.auteur !== 'string' || input.auteur.trim() === '') {
-      return c.json({ error: 'Le champ "auteur" doit être une chaîne non vide' }, 400);
-    }
-    if (input.auteur.length > 25) {
-      return c.json({ error: 'Le champ "auteur" ne peut pas dépasser 25 caractères' }, 400);
-    }
-  }
-  if (typeof input.encoded !== 'string' || input.encoded.trim() === '') {
-    return c.json({ error: 'Le champ "encoded" doit être une chaîne non vide' }, 400);
-  }
-  if (input.encoded.length > 8000) {
-    return c.json({ error: 'Le champ "encoded" ne peut pas dépasser 8000 caractères' }, 400);
-  }
-  if (input.tags !== undefined) {
-    if (!Array.isArray(input.tags)) {
-      return c.json({ error: 'Le champ "tags" doit être un tableau' }, 400);
-    }
-    if (input.tags.length > 5) {
-      return c.json({ error: 'Maximum 5 tags autorisés' }, 400);
-    }
-    for (const tag of input.tags) {
-      if (typeof tag !== 'string') {
-        return c.json({ error: 'Chaque tag doit être une chaîne de caractères' }, 400);
-      }
-      if (tag.length > 25) {
-        return c.json({ error: 'Chaque tag ne peut pas dépasser 25 caractères' }, 400);
-      }
-    }
-  }
+  const input = result.data;
 
   const build = await createBuild(
       {
         nom: input.nom,
         description: input.description,
-        auteur: typeof input.auteur === 'string' ? input.auteur : undefined,
-        tags: Array.isArray(input.tags) ? (input.tags as string[]) : undefined,
+        auteur: input.auteur,
+        tags: input.tags,
         encoded: input.encoded,
       },
       user.sub,
@@ -591,7 +318,7 @@ app.get('/builds/:id', async (c) => {
 });
 
 app.put('/builds/:id', requireAuth, async (c) => {
-  const user = c.get('user') as JWTPayload;
+  const user = c.get('user');
   const id = c.req.param('id') ?? '';
 
   const existing = await getBuild(id, c.env);
@@ -607,72 +334,16 @@ app.put('/builds/:id', requireAuth, async (c) => {
     return c.json({ error: 'Corps de requête JSON invalide' }, 400);
   }
 
-  const input = body as {
-    nom?: unknown;
-    description?: unknown;
-    auteur?: unknown;
-    tags?: unknown;
-    encoded?: unknown;
-  };
+  const result = BuildSchema.partial().safeParse(body);
+  if (!result.success) {
+    return c.json({ error: result.error.issues[0].message }, 400);
+  }
 
-  if (input.nom !== undefined) {
-    if (typeof input.nom !== 'string' || input.nom.trim() === '') {
-      return c.json({ error: 'Le champ "nom" doit être une chaîne non vide' }, 400);
-    }
-    if (input.nom.length > 25) {
-      return c.json({ error: 'Le champ "nom" ne peut pas dépasser 25 caractères' }, 400);
-    }
-  }
-  if (input.description !== undefined) {
-    if (typeof input.description !== 'string') {
-      return c.json({ error: 'Le champ "description" doit être une chaîne' }, 400);
-    }
-    if (input.description.length > 250) {
-      return c.json({ error: 'Le champ "description" ne peut pas dépasser 250 caractères' }, 400);
-    }
-  }
-  if (input.auteur !== undefined) {
-    if (typeof input.auteur !== 'string' || input.auteur.trim() === '') {
-      return c.json({ error: 'Le champ "auteur" doit être une chaîne non vide' }, 400);
-    }
-    if (input.auteur.length > 25) {
-      return c.json({ error: 'Le champ "auteur" ne peut pas dépasser 25 caractères' }, 400);
-    }
-  }
-  if (input.encoded !== undefined) {
-    if (typeof input.encoded !== 'string' || input.encoded.trim() === '') {
-      return c.json({ error: 'Le champ "encoded" doit être une chaîne non vide' }, 400);
-    }
-    if (input.encoded.length > 8000) {
-      return c.json({ error: 'Le champ "encoded" ne peut pas dépasser 8000 caractères' }, 400);
-    }
-  }
-  if (input.tags !== undefined) {
-    if (!Array.isArray(input.tags)) {
-      return c.json({ error: 'Le champ "tags" doit être un tableau' }, 400);
-    }
-    if (input.tags.length > 5) {
-      return c.json({ error: 'Maximum 5 tags autorisés' }, 400);
-    }
-    for (const tag of input.tags) {
-      if (typeof tag !== 'string') {
-        return c.json({ error: 'Chaque tag doit être une chaîne de caractères' }, 400);
-      }
-      if (tag.length > 25) {
-        return c.json({ error: 'Chaque tag ne peut pas dépasser 25 caractères' }, 400);
-      }
-    }
-  }
+  const input = result.data;
 
   const updated = await updateBuild(
       id,
-      {
-        nom: typeof input.nom === 'string' ? input.nom : undefined,
-        description: typeof input.description === 'string' ? input.description : undefined,
-        auteur: typeof input.auteur === 'string' ? input.auteur : undefined,
-        tags: Array.isArray(input.tags) ? (input.tags as string[]) : undefined,
-        encoded: typeof input.encoded === 'string' ? input.encoded : undefined,
-      },
+      input,
       c.env,
   );
 
@@ -680,7 +351,7 @@ app.put('/builds/:id', requireAuth, async (c) => {
 });
 
 app.delete('/builds/:id', requireAuth, async (c) => {
-  const user = c.get('user') as JWTPayload;
+  const user = c.get('user');
   const id = c.req.param('id') ?? '';
 
   const existing = await getBuild(id, c.env);
@@ -694,7 +365,7 @@ app.delete('/builds/:id', requireAuth, async (c) => {
 });
 
 app.post('/builds/:id/like', requireAuth, async (c) => {
-  const user = c.get('user') as JWTPayload;
+  const user = c.get('user');
   const id = c.req.param('id') ?? '';
   const result = await toggleLike(id, user.sub, c.env);
   if (!result) return c.json({ error: 'Build introuvable' }, 404);

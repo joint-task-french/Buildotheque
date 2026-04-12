@@ -65,33 +65,34 @@ function extractBearerToken(authHeader: string | null | undefined): string | nul
   return match ? match[1] : null;
 }
 
+/** Get the JWT payload from the request, returns null if invalid or not present. */
+async function getAuthenticatedUser(c: Context<any>): Promise<JWTPayload | null> {
+  const token = extractBearerToken(c.req.header('Authorization'));
+  if (!token) return null;
+  return verifyJWT(token, c.env.JWT_SECRET);
+}
+
 /** Middleware: attach authenticated user to context variables if a valid JWT is present. */
 export async function authMiddleware(
-    c: Context<{ Bindings: Env; Variables: { user?: JWTPayload } }>,
+    c: Context<{ Bindings: Env; Variables: { user: JWTPayload } }>,
     next: () => Promise<void>,
 ): Promise<void> {
-  const token = extractBearerToken(c.req.header('Authorization'));
-  if (token) {
-    const payload = await verifyJWT(token, c.env.JWT_SECRET);
-    if (payload) {
-      c.set('user', payload);
-    }
+  const payload = await getAuthenticatedUser(c);
+  if (payload) {
+    c.set('user', payload);
   }
   await next();
 }
 
 /** Middleware: require authentication, return 401 if not authenticated. */
 export async function requireAuth(
-    c: Context<{ Bindings: Env; Variables: { user?: JWTPayload } }>,
+    c: Context<{ Bindings: Env; Variables: { user: JWTPayload } }>,
     next: () => Promise<void>,
 ): Promise<Response | void> {
-  const token = extractBearerToken(c.req.header('Authorization'));
-  if (!token) {
-    return c.json({ error: 'Authentification requise' }, 401);
-  }
-  const payload = await verifyJWT(token, c.env.JWT_SECRET);
+  const payload = await getAuthenticatedUser(c);
   if (!payload) {
-    return c.json({ error: 'Token invalide ou expiré' }, 401);
+    const hasToken = !!extractBearerToken(c.req.header('Authorization'));
+    return c.json({ error: hasToken ? 'Token invalide ou expiré' : 'Authentification requise' }, 401);
   }
   c.set('user', payload);
   await next();

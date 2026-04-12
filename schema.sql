@@ -1,8 +1,11 @@
 CREATE TABLE IF NOT EXISTS builds (
                                       id TEXT PRIMARY KEY,
                                       nom TEXT NOT NULL,
+                                      nom_normalized TEXT NOT NULL,
                                       description TEXT,
+                                      description_normalized TEXT,
                                       auteur TEXT,
+                                      auteur_normalized TEXT,
                                       auteurId TEXT NOT NULL,
                                       encoded TEXT NOT NULL,
                                       likes INTEGER DEFAULT 0,
@@ -12,6 +15,7 @@ CREATE TABLE IF NOT EXISTS builds (
 CREATE TABLE IF NOT EXISTS tags (
                                     build_id TEXT,
                                     tag TEXT,
+                                    tag_normalized TEXT NOT NULL,
                                     PRIMARY KEY (build_id, tag),
     FOREIGN KEY (build_id) REFERENCES builds(id) ON DELETE CASCADE
     );
