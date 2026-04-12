@@ -1,6 +1,15 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { Build, BuildInput, Env } from './types';
 
+async function updateTags(id: string, tags: string[], env: Env): Promise<void> {
+  if (tags.length > 0) {
+    const statements = tags.map(tag =>
+        env.DB.prepare('INSERT INTO tags (build_id, tag) VALUES (?, ?)').bind(id, tag)
+    );
+    await env.DB.batch(statements);
+  }
+}
+
 export async function createBuild(
     input: BuildInput,
     authorId: string,
@@ -17,12 +26,7 @@ export async function createBuild(
       .bind(id, input.nom, input.description, auteur, authorId, input.encoded, timestamp)
       .run();
 
-  if (tags.length > 0) {
-    const statements = tags.map(tag =>
-        env.DB.prepare('INSERT INTO tags (build_id, tag) VALUES (?, ?)').bind(id, tag)
-    );
-    await env.DB.batch(statements);
-  }
+  await updateTags(id, tags, env);
 
   return {
     id,
@@ -44,14 +48,14 @@ export async function getBuild(id: string, env: Env): Promise<Build | null> {
               LEFT JOIN tags t ON b.id = t.build_id
        WHERE b.id = ?
        GROUP BY b.id`
-  ).bind(id).first<any>();
+  ).bind(id).first<{ [key: string]: any; tags_list: string | null }>();
 
   if (!result) return null;
 
   return {
     ...result,
     tags: result.tags_list ? result.tags_list.split(',') : [],
-  } as Build;
+  } as unknown as Build;
 }
 
 export async function updateBuild(
@@ -74,13 +78,7 @@ export async function updateBuild(
 
   if (input.tags !== undefined) {
     await env.DB.prepare('DELETE FROM tags WHERE build_id = ?').bind(id).run();
-
-    if (tags.length > 0) {
-      const statements = tags.map(tag =>
-          env.DB.prepare('INSERT INTO tags (build_id, tag) VALUES (?, ?)').bind(id, tag)
-      );
-      await env.DB.batch(statements);
-    }
+    await updateTags(id, tags, env);
   }
 
   return { ...existing, nom, description, auteur, encoded, tags };
@@ -287,11 +285,11 @@ async function getBuildsInternal(
   query += ` LIMIT ? OFFSET ?`;
   params.push(limit, offset);
 
-  const { results } = await env.DB.prepare(query).bind(...params).all<any>();
+  const { results } = await env.DB.prepare(query).bind(...params).all<{ [key: string]: any; tags_list: string | null }>();
   const builds = results.map(r => ({
     ...r,
     tags: r.tags_list ? r.tags_list.split(',') : []
-  })) as Build[];
+  })) as unknown as Build[];
 
   return { builds, total };
 }

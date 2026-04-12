@@ -1,6 +1,18 @@
-/**
- * TypeScript types for the Buildotheque API.
- */
+import { z } from 'zod';
+
+/** TypeScript types for the Buildotheque API. */
+
+/** Zod schema for build input validation. */
+export const BuildSchema = z.object({
+  nom: z.string().trim().min(1, 'Le champ "nom" doit être une chaîne non vide').max(25, 'Le champ "nom" ne peut pas dépasser 25 caractères'),
+  description: z.string().max(500, 'Le champ "description" ne peut pas dépasser 500 caractères'),
+  auteur: z.string().trim().min(1, 'Le champ "auteur" doit être une chaîne non vide').max(25, 'Le champ "auteur" ne peut pas dépasser 25 caractères').optional(),
+  encoded: z.string().trim().min(1, 'Le champ "encoded" doit être une chaîne non vide').max(8000, 'Le champ "encoded" ne peut pas dépasser 8000 caractères'),
+  tags: z.array(z.string().max(25, 'Chaque tag ne peut pas dépasser 25 caractères')).max(5, 'Maximum 5 tags autorisés').optional(),
+});
+
+/** Input payload for creating or updating a build. */
+export type BuildInput = z.infer<typeof BuildSchema>;
 
 /** A build object stored in KV. */
 export interface Build {
@@ -22,16 +34,6 @@ export interface Build {
   likes: number;
   /** Creation timestamp (Unix ms). */
   timestamp: number;
-}
-
-/** Input payload for creating or updating a build. */
-export interface BuildInput {
-  nom: string;
-  description: string;
-  /** Display name chosen by the author (≤ 25 characters). */
-  auteur?: string;
-  tags?: string[];
-  encoded: string;
 }
 
 /** Discord OAuth token response. */

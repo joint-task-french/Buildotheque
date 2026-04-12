@@ -117,7 +117,7 @@ Identique à `/builds` mais trié par nombre de "likes" décroissant.
 
 **Corps de la requête (JSON) :**
 - `nom` (string, requis, max 25 car.)
-- `description` (string, requis, max 250 car.)
+- `description` (string, requis, max 500 car.)
 - `encoded` (string, requis, max 8000 car.) : La configuration encodée du build.
 - `auteur` (string, optionnel, max 25 car.) : Nom d'affichage personnalisé.
 - `tags` (array de strings, optionnel, max 5 tags de 25 car. chacun)
