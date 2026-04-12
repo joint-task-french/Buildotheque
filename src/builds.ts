@@ -4,7 +4,7 @@ import type { Build, BuildInput, Env } from './types';
 async function updateTags(id: string, tags: string[], env: Env): Promise<void> {
   if (tags.length > 0) {
     const statements = tags.map(tag =>
-        env.DB.prepare('INSERT INTO tags (build_id, tag) VALUES (?, ?)').bind(id, tag)
+        env.DB.prepare('INSERT INTO tags (build_id, tag, tag_normalized) VALUES (?, ?, ?)').bind(id, tag, normalizeString(tag))
     );
     await env.DB.batch(statements);
   }
@@ -21,9 +21,20 @@ export async function createBuild(
   const tags = input.tags ?? [];
 
   await env.DB.prepare(
-      'INSERT INTO builds (id, nom, description, auteur, auteurId, encoded, likes, timestamp) VALUES (?, ?, ?, ?, ?, ?, 0, ?)'
+      'INSERT INTO builds (id, nom, nom_normalized, description, description_normalized, auteur, auteur_normalized, auteurId, encoded, likes, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)'
   )
-      .bind(id, input.nom, input.description, auteur, authorId, input.encoded, timestamp)
+      .bind(
+          id,
+          input.nom,
+          normalizeString(input.nom),
+          input.description,
+          input.description ? normalizeString(input.description) : null,
+          auteur,
+          normalizeString(auteur),
+          authorId,
+          input.encoded,
+          timestamp
+      )
       .run();
 
   await updateTags(id, tags, env);
@@ -43,7 +54,7 @@ export async function createBuild(
 
 export async function getBuild(id: string, env: Env): Promise<Build | null> {
   const result = await env.DB.prepare(
-      `SELECT b.*, GROUP_CONCAT(t.tag) as tags_list
+      `SELECT b.id, b.nom, b.description, b.auteur, b.auteurId, b.encoded, b.likes, b.timestamp, GROUP_CONCAT(t.tag) as tags_list
        FROM builds b
               LEFT JOIN tags t ON b.id = t.build_id
        WHERE b.id = ?
@@ -73,8 +84,17 @@ export async function updateBuild(
   const tags = input.tags ?? existing.tags;
 
   await env.DB.prepare(
-      'UPDATE builds SET nom = ?, description = ?, auteur = ?, encoded = ? WHERE id = ?'
-  ).bind(nom, description, auteur, encoded, id).run();
+      'UPDATE builds SET nom = ?, nom_normalized = ?, description = ?, description_normalized = ?, auteur = ?, auteur_normalized = ?, encoded = ? WHERE id = ?'
+  ).bind(
+      nom,
+      normalizeString(nom),
+      description,
+      description ? normalizeString(description) : null,
+      auteur,
+      normalizeString(auteur),
+      encoded,
+      id
+  ).run();
 
   if (input.tags !== undefined) {
     await env.DB.prepare('DELETE FROM tags WHERE build_id = ?').bind(id).run();
@@ -120,6 +140,16 @@ export async function toggleLike(
   await env.DB.prepare('UPDATE builds SET likes = ? WHERE id = ?').bind(newLikes, id).run();
 
   return { build: { ...existing, likes: newLikes }, liked: !alreadyLiked };
+}
+
+/**
+ * Normalise une chaîne de caractères en TypeScript (minuscules + suppression des accents).
+ */
+function normalizeString(str: string): string {
+  return str
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
 }
 
 
@@ -208,11 +238,11 @@ function parseAdvancedSearch(text: string) {
         conditions.push({ field, value: numValue, operator });
       }
     } else {
-      conditions.push({ field, value: `%${value}%`, operator: 'LIKE' });
+      conditions.push({ field, value: normalizeString(value), operator: 'LIKE' });
     }
   }
 
-  return { conditions, freeText, hasOperator };
+  return { conditions, freeText: freeText.map(normalizeString), hasOperator };
 }
 
 async function getBuildsInternal(
@@ -225,7 +255,7 @@ async function getBuildsInternal(
     offset = 0,
 ): Promise<{ builds: Build[]; total: number }> {
   let query = `
-    SELECT b.*, GROUP_CONCAT(t.tag) as tags_list
+    SELECT b.id, b.nom, b.description, b.auteur, b.auteurId, b.encoded, b.likes, b.timestamp, GROUP_CONCAT(t.tag) as tags_list
     FROM builds b
            LEFT JOIN tags t ON b.id = t.build_id
     WHERE 1=1
@@ -243,28 +273,33 @@ async function getBuildsInternal(
     if (hasOperator || freeText.length > 0) {
       // Handle advanced conditions
       for (const cond of conditions) {
-        query += ` AND ${cond.field} ${cond.operator} ?`;
-        params.push(cond.value);
+        if (cond.operator === 'LIKE') {
+          query += ` AND ${cond.field}_normalized LIKE ?`;
+          params.push(`%${cond.value}%`);
+        } else {
+          query += ` AND ${cond.field} ${cond.operator} ?`;
+          params.push(cond.value);
+        }
       }
 
       // Handle free text
       for (const term of freeText) {
-        query += ` AND (b.nom LIKE ? OR b.description LIKE ? OR b.auteur LIKE ?)`;
+        query += ` AND (b.nom_normalized LIKE ? OR b.description_normalized LIKE ? OR b.auteur_normalized LIKE ?)`;
         const t = `%${term}%`;
         params.push(t, t, t);
       }
     } else {
       // Fallback to classic search if no operator found (though parseAdvancedSearch should handle it via freeText)
-      query += ` AND (b.nom LIKE ? OR b.description LIKE ? OR b.auteur LIKE ?)`;
-      const t = `%${text}%`;
+      query += ` AND (b.nom_normalized LIKE ? OR b.description_normalized LIKE ? OR b.auteur_normalized LIKE ?)`;
+      const t = `%${normalizeString(text)}%`;
       params.push(t, t, t);
     }
   }
 
   if (tags && tags.length > 0) {
     for (const tag of tags) {
-      query += ` AND EXISTS (SELECT 1 FROM tags WHERE build_id = b.id AND tag = ?)`;
-      params.push(tag);
+      query += ` AND EXISTS (SELECT 1 FROM tags WHERE build_id = b.id AND tag_normalized = ?)`;
+      params.push(normalizeString(tag));
     }
   }
 
