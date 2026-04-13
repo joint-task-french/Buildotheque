@@ -18,6 +18,7 @@ import {
   updateBuild,
   deleteBuild,
   toggleLike,
+  getUserLikes,
   searchBuilds,
   getRecentBuilds,
   getTopBuilds,
@@ -370,6 +371,12 @@ app.post('/builds/:id/like', requireAuth, async (c) => {
   const result = await toggleLike(id, user.sub, c.env);
   if (!result) return c.json({ error: 'Build introuvable' }, 404);
   return c.json(result);
+});
+
+app.get('/likes', requireAuth, async (c) => {
+  const user = c.get('user');
+  const likes = await getUserLikes(user.sub, c.env);
+  return c.json(likes);
 });
 
 app.notFound((c) => c.json({ error: 'Route introuvable' }, 404));

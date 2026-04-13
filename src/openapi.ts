@@ -234,5 +234,22 @@ export const openapiDoc = {
         responses: { 200: { description: 'Succès', content: { 'application/json': { schema: { type: 'object' as const, properties: { builds: { type: 'array', items: { $ref: '#/components/schemas/Build' } }, total: { type: 'integer' }, limit: { type: 'integer' }, offset: { type: 'integer' } } } } } } },
       },
     },
+    '/likes': {
+      get: {
+        summary: 'Récupérer les IDs des builds likés par l\'utilisateur connecté',
+        security: [{ BearerAuth: [] }],
+        responses: {
+          200: {
+            description: 'Succès',
+            content: {
+              'application/json': {
+                schema: { type: 'array', items: { type: 'string' } },
+              },
+            },
+          },
+          401: { description: 'Non authentifié' },
+        },
+      },
+    },
   },
 } as const;
