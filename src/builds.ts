@@ -142,6 +142,14 @@ export async function toggleLike(
   return { build: { ...existing, likes: newLikes }, liked: !alreadyLiked };
 }
 
+export async function getUserLikes(userId: string, env: Env): Promise<string[]> {
+  const result = await env.DB.prepare(
+      'SELECT build_id FROM build_likes WHERE user_id = ?'
+  ).bind(userId).all<{ build_id: string }>();
+
+  return result.results.map(r => r.build_id);
+}
+
 /**
  * Normalise une chaîne de caractères en TypeScript (minuscules + suppression des accents).
  */
